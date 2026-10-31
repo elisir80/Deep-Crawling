@@ -3,12 +3,16 @@ Main web crawler orchestrator with smooth rate limiting and modular architecture
 Refactored for better code practices and maintainability.
 """
 import requests
+import os
+import json
 import socket
 import ssl
 import threading
 import time
 import asyncio
 import re
+from datetime import datetime
+from io import BytesIO
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
@@ -84,7 +88,7 @@ class WebCrawler:
         # HTTP session
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'LibreCrawl/1.0 (Web Crawler)'
+            'User-Agent': 'Deep Crawling/1.0 (Web Crawler)'
         })
 
         # Base URL tracking
@@ -106,6 +110,7 @@ class WebCrawler:
 
         # Results storage
         self.crawl_results = []
+        self.duplicate_groups = []
         self.results_lock = threading.Lock()
 
         # State flags
@@ -130,6 +135,7 @@ class WebCrawler:
 
         # Robots.txt cache
         self._robots_cache = {}
+        self._hsts_hosts = set()
 
         # Image status cache (avoids re-checking the same image URL across pages)
         self._image_status_cache = {}
@@ -157,7 +163,20 @@ class WebCrawler:
             'delay': 1.0,
             'follow_redirects': True,
             'crawl_external': False,
-            'user_agent': 'LibreCrawl/1.0 (Web Crawler)',
+            'crawl_all_subdomains': False,
+            'crawl_outside_start_folder': True,
+            'respect_hsts': False,
+            'respect_noindex': False,
+            'respect_nofollow': False,
+            'respect_canonical': False,
+            'respect_next_prev': False,
+            'follow_canonical': False,
+            'follow_redirect_chains': True,
+            'follow_meta_refresh': True,
+            'crawl_fragments': False,
+            'retry_5xx': True,
+            'retry_5xx_attempts': 2,
+            'user_agent': 'Deep Crawling/1.0 (Web Crawler)',
             'timeout': 10,
             'retries': 3,
             'accept_language': 'en-US,en;q=0.9',
@@ -173,7 +192,18 @@ class WebCrawler:
             'log_level': 'INFO',
             'enable_proxy': False,
             'proxy_url': None,
+            'proxy_username': '',
+            'proxy_password': '',
+            'proxy_no_proxy': '',
+            'trusted_certificates': True,
+            'storage_mode': 'full',
+            'crawl_retention_days': 90,
             'custom_headers': {},
+            'auth_username': '',
+            'auth_password': '',
+            'auth_bearer_token': '',
+            'cookie_header': '',
+            'cookie_storage': False,
             'discover_sitemaps': True,
             'enable_pagespeed': False,
             'enable_javascript': False,
@@ -181,10 +211,24 @@ class WebCrawler:
             'js_timeout': 30,
             'js_browser': 'chromium',
             'js_headless': True,
-            'js_user_agent': 'LibreCrawl/1.0 (Web Crawler with JavaScript)',
+            'js_user_agent': 'Deep Crawling/1.0 (Web Crawler with JavaScript)',
             'js_viewport_width': 1920,
             'js_viewport_height': 1080,
             'js_max_concurrent_pages': 3,
+            'js_screenshots': False,
+            'js_screenshot_dir': 'data/screenshots',
+            'js_archive': False,
+            'js_archive_dir': 'data/rendered',
+            'js_flatten_shadow_dom': False,
+            'js_flatten_iframes': False,
+            'js_custom_script': '',
+            'max_redirects': 10,
+            'max_url_length': 2048,
+            'max_query_strings': 20,
+            'max_folder_depth': 20,
+            'max_links_per_url': 0,
+            'max_urls_per_depth': 0,
+            'max_urls_per_subdomain': 0,
             'issue_exclusion_patterns': [
                 # WordPress admin & system paths
                 '/wp-admin/*', '/wp-content/plugins/*', '/wp-content/themes/*', '/wp-content/uploads/*',
@@ -260,13 +304,14 @@ class WebCrawler:
             ]
         }
 
-    def start_crawl(self, url, user_id=None, session_id=None):
-        """Start crawling from the given URL"""
+    def start_crawl(self, url, user_id=None, session_id=None, crawl_mode='spider', seed_urls=None):
+        """Start crawling from a spider URL, URL list, or XML sitemap."""
         if self.is_running:
             return False, "Crawl already in progress"
 
         try:
-            # Validate and normalize URL
+            # Validate and normalize the primary URL. For list/sitemap modes it
+            # is used to establish the base domain and persistence metadata.
             if not url.startswith(('http://', 'https://')):
                 url = 'https://' + url
 
@@ -294,12 +339,32 @@ class WebCrawler:
             # Reset state
             self._reset_state()
 
-            # Add initial URL
-            self.link_manager.add_url(url, 0)
-            self.stats['discovered'] = 1
+            # Seed the queue according to the selected crawl mode.
+            if crawl_mode == 'sitemap':
+                sitemap_url = (seed_urls or [url])[0]
+                if not sitemap_url.startswith(('http://', 'https://')):
+                    sitemap_url = 'https://' + sitemap_url
+                seed_urls = self.sitemap_parser._parse_sitemap(sitemap_url)
+            elif crawl_mode == 'list':
+                seed_urls = seed_urls or [url]
+            else:
+                seed_urls = [url]
 
-            # Discover sitemaps if enabled
-            if self.config.get('discover_sitemaps', True):
+            added = 0
+            for seed_url in seed_urls:
+                if not seed_url or not isinstance(seed_url, str):
+                    continue
+                if not seed_url.startswith(('http://', 'https://')):
+                    seed_url = 'https://' + seed_url
+                if self._should_crawl_url(seed_url):
+                    self.link_manager.add_url(seed_url.strip(), 0)
+                    added += 1
+            self.stats['discovered'] = self.link_manager.get_stats()['discovered']
+            if not added:
+                return False, 'No valid seed URLs were supplied'
+
+            # Spider mode may additionally discover declared sitemaps.
+            if crawl_mode == 'spider' and self.config.get('discover_sitemaps', True):
                 print(f"Starting sitemap discovery for {url}")
                 self._discover_and_add_sitemap_urls(url)
                 print(f"Sitemap discovery completed. Total discovered URLs: {self.stats['discovered']}")
@@ -329,7 +394,12 @@ class WebCrawler:
 
         self.rate_limiter = RateLimiter(requests_per_second)
         self.link_manager = LinkManager(self.base_domain)
-        self.sitemap_parser = SitemapParser(self.session, self.base_domain, self.config['timeout'])
+        self.sitemap_parser = SitemapParser(
+            self.session,
+            self.base_domain,
+            self.config['timeout'],
+            request_wait=self._wait_for_request_slot,
+        )
         self.issue_detector = IssueDetector(self.config.get('issue_exclusion_patterns', []))
 
         # Initialize JS renderer if needed
@@ -344,6 +414,7 @@ class WebCrawler:
             self.issue_detector.reset()
 
         self.crawl_results.clear()
+        self.duplicate_groups = []
         self.stats = {
             'discovered': 0,
             'crawled': 0,
@@ -606,6 +677,7 @@ class WebCrawler:
             'urls': self.crawl_results.copy(),
             'links': self.link_manager.all_links.copy() if self.link_manager else [],
             'issues': self.issue_detector.get_issues() if self.issue_detector else [],
+            'duplicate_groups': self.duplicate_groups,
             'progress': min(100, (self.stats['crawled'] / max(link_stats['discovered'], 1)) * 100),
             'is_running_pagespeed': self.is_running_pagespeed,
             'memory': self.memory_monitor.get_stats(),
@@ -624,7 +696,11 @@ class WebCrawler:
         try:
             # Save URLs
             if self.unsaved_urls:
-                save_url_batch(self.crawl_id, self.unsaved_urls)
+                urls_to_save = self.unsaved_urls
+                if self.config.get('storage_mode', 'full') == 'summary':
+                    heavy_fields = {'source_html', 'rendered_html', 'extracted_text', 'screenshot_path', 'rendered_archive_path', 'javascript_errors', 'render_diagnostics', 'pdf_text'}
+                    urls_to_save = [{key: value for key, value in row.items() if key not in heavy_fields} for row in self.unsaved_urls]
+                save_url_batch(self.crawl_id, urls_to_save)
                 self.unsaved_urls.clear()
 
             # Save links
@@ -647,6 +723,7 @@ class WebCrawler:
                 peak_memory_mb=memory_stats.get('peak_mb', 0),
                 estimated_size_mb=memory_stats.get('estimated_crawl_mb', 0)
             )
+            self._save_cookie_storage()
 
             self.last_save_time = time.time()
             print(f"Saved batch to database for crawl {self.crawl_id}")
@@ -708,6 +785,10 @@ class WebCrawler:
             'User-Agent': self.config['user_agent'],
             'Accept-Language': self.config['accept_language']
         })
+        try:
+            self.session.max_redirects = max(0, int(self.config.get('max_redirects', 10)))
+        except (TypeError, ValueError):
+            self.session.max_redirects = 10
 
         # Add custom headers
         if self.config['custom_headers']:
@@ -715,12 +796,40 @@ class WebCrawler:
 
         # Configure proxy if enabled
         if self.config['enable_proxy'] and self.config['proxy_url']:
+            proxy_url = self.config['proxy_url']
+            proxy_username = self.config.get('proxy_username', '')
+            proxy_password = self.config.get('proxy_password', '')
+            if proxy_username and '@' not in proxy_url.split('://', 1)[-1].split('/', 1)[0]:
+                from urllib.parse import quote
+                scheme, rest = proxy_url.split('://', 1)
+                proxy_url = f'{scheme}://{quote(proxy_username)}:{quote(proxy_password)}@{rest}'
             self.session.proxies = {
-                'http': self.config['proxy_url'],
-                'https': self.config['proxy_url']
+                'http': proxy_url,
+                'https': proxy_url
             }
         else:
             self.session.proxies = {}
+        self.session.trust_env = True
+        no_proxy = self.config.get('proxy_no_proxy', '').strip()
+        if no_proxy:
+            self.session.trust_env = False
+            self.session.proxies['no_proxy'] = no_proxy
+        self.session.verify = bool(self.config.get('trusted_certificates', True))
+
+        username = self.config.get('auth_username', '')
+        password = self.config.get('auth_password', '')
+        self.session.auth = (username, password) if username else None
+        bearer = self.config.get('auth_bearer_token', '').strip()
+        if bearer:
+            self.session.headers['Authorization'] = bearer if bearer.lower().startswith('bearer ') else f'Bearer {bearer}'
+        else:
+            self.session.headers.pop('Authorization', None)
+        cookie_header = self.config.get('cookie_header', '').strip()
+        if cookie_header:
+            self.session.headers['Cookie'] = cookie_header
+        else:
+            self.session.headers.pop('Cookie', None)
+        self._load_cookie_storage()
 
         # Update rate limiter if it exists
         if self.rate_limiter:
@@ -728,6 +837,34 @@ class WebCrawler:
                 self.rate_limiter.update_rate(1.0 / self.config['delay'])
             else:
                 self.rate_limiter.update_rate(100.0)
+
+    def _cookie_storage_path(self):
+        if not self.crawl_id or not self.config.get('cookie_storage', False):
+            return None
+        return os.path.join('data', 'cookies', f'{self.crawl_id}.json')
+
+    def _load_cookie_storage(self):
+        path = self._cookie_storage_path()
+        if not path or not os.path.exists(path):
+            return
+        try:
+            with open(path, encoding='utf-8') as source:
+                for cookie in json.load(source):
+                    self.session.cookies.set(cookie['name'], cookie.get('value', ''), domain=cookie.get('domain'), path=cookie.get('path', '/'))
+        except Exception as error:
+            print(f'Cookie storage load skipped: {error}')
+
+    def _save_cookie_storage(self):
+        path = self._cookie_storage_path()
+        if not path:
+            return
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            cookies = [{'name': cookie.name, 'value': cookie.value, 'domain': cookie.domain, 'path': cookie.path} for cookie in self.session.cookies]
+            with open(path, 'w', encoding='utf-8') as target:
+                json.dump(cookies, target, ensure_ascii=False)
+        except Exception as error:
+            print(f'Cookie storage save skipped: {error}')
 
     def _crawl_worker(self):
         """Main crawling worker with smooth rate limiting"""
@@ -844,6 +981,7 @@ class WebCrawler:
             if self.issue_detector and self.config.get('enable_duplication_check', True):
                 print("Running duplication detection...")
                 duplication_threshold = self.config.get('duplication_threshold', 0.85)
+                self.duplicate_groups = self.issue_detector.build_duplicate_groups(self.crawl_results, duplication_threshold)
                 self.issue_detector.detect_duplication_issues(self.crawl_results, duplication_threshold)
                 print(f"Duplication detection complete. Total issues: {len(self.issue_detector.get_issues())}")
 
@@ -881,11 +1019,14 @@ class WebCrawler:
             # Check file size if configured
             if self.config.get('max_file_size', 0) > 0:
                 try:
+                    self._wait_for_request_slot()
                     head_response = self.session.head(
                         url,
                         timeout=self.config['timeout'],
                         allow_redirects=self.config['follow_redirects']
                     )
+                    if head_response.status_code == 429:
+                        self._defer_after_rate_limit(head_response, 0)
                     content_length = head_response.headers.get('content-length')
                     if content_length and int(content_length) > self.config['max_file_size']:
                         return self.seo_extractor.create_empty_result(
@@ -900,11 +1041,19 @@ class WebCrawler:
             response = None
             for attempt in range(retries + 1):
                 try:
+                    self._wait_for_request_slot()
                     response = self.session.get(
                         url,
                         timeout=self.config['timeout'],
                         allow_redirects=self.config['follow_redirects']
                     )
+                    if response.status_code == 429 and attempt < retries:
+                        self._defer_after_rate_limit(response, attempt)
+                        continue
+                    if (response.status_code >= 500 and self.config.get('retry_5xx', True)
+                            and attempt < int(self.config.get('retry_5xx_attempts', 2))):
+                        time.sleep(min(2 ** attempt, 5))
+                        continue
                     break
                 except Exception as e:
                     if attempt >= retries:
@@ -920,6 +1069,8 @@ class WebCrawler:
                 'status_code': response.status_code,
                 'error_type': None,
                 'content_type': response.headers.get('content-type', '').split(';')[0],
+                'media_type': response.headers.get('content-type', '').split(';')[0],
+                'media_metadata': {},
                 'size': len(response.content),
                 'is_internal': is_internal,
                 'depth': depth,
@@ -955,11 +1106,43 @@ class WebCrawler:
                 'external_links': 0,
                 'internal_links': 0,
                 'response_time': 0,
+                'http_headers': dict(response.headers),
+                'cookies': [
+                    {'name': cookie.name, 'value': cookie.value,
+                     'domain': cookie.domain, 'path': cookie.path}
+                    for cookie in response.cookies
+                ],
+                'security': {
+                    'https': urlparse(url).scheme == 'https',
+                    'hsts': bool(response.headers.get('strict-transport-security')),
+                    'hsts_header': response.headers.get('strict-transport-security', '')
+                },
                 'redirects': [],
                 'hreflang': [],
                 'schema_org': [],
                 'linked_from': []
             }
+            snapshot_limit = int(self.config.get('html_snapshot_limit', 500000) or 500000)
+            result['source_html'] = response.text[:snapshot_limit]
+            result['rendered_html'] = ''
+            result['extracted_text'] = ''
+            result['snapshot_type'] = 'source'
+            result['snapshot_captured_at'] = datetime.utcnow().isoformat() + 'Z'
+            if result['security']['hsts']:
+                self._hsts_hosts.add(urlparse(url).netloc.lower())
+
+            result['redirects'] = [
+                {'from': hop.url, 'to': hop.headers.get('location', ''),
+                 'status_code': hop.status_code}
+                for hop in response.history
+            ]
+            if response.history:
+                result['redirect_final_url'] = response.url
+                result['redirect_hops'] = len(response.history)
+                max_redirects = self.config.get('max_redirects', 0)
+                if max_redirects and len(response.history) > max_redirects:
+                    result['error_type'] = 'max_redirects_exceeded'
+                    result['error'] = f'Maximum redirects exceeded: {len(response.history)} > {max_redirects}'
 
             # Only parse HTML content
             if 'text/html' in response.headers.get('content-type', ''):
@@ -973,9 +1156,23 @@ class WebCrawler:
                 self.seo_extractor.extract_json_ld(soup, result)
                 self.seo_extractor.extract_analytics_tracking(soup, response.text, result)
                 self.seo_extractor.extract_images(soup, url, result)
+                self.seo_extractor.extract_resources(soup, url, result)
+                self.seo_extractor.extract_advanced_directives(soup, url, result)
+                self._enqueue_special_directives(result, depth)
                 self.seo_extractor.extract_link_counts(soup, result, self.base_domain)
                 self.seo_extractor.extract_hreflang(soup, result)
                 self.seo_extractor.extract_schema_org(soup, result)
+                self.seo_extractor.extract_accessibility(soup, result)
+                self.seo_extractor.validate_html(response.text, result)
+                from src.core.content_analysis import analyze_content
+                result['content_analysis'] = analyze_content(soup, self.config.get('content_area_selector', ''))
+                result['extracted_text'] = (result.get('content_analysis') or {}).get('content_text', '')
+                self.seo_extractor.extract_custom(
+                    response.text, result, self.config.get('custom_extractions', [])
+                )
+                self.seo_extractor.extract_custom_search(
+                    response.text, result, self.config.get('custom_searches', [])
+                )
 
                 # Collect all links
                 links_before = len(self.link_manager.all_links)
@@ -1009,8 +1206,35 @@ class WebCrawler:
                     (self.config['crawl_external'] and depth < self.config['max_depth'])
                 )
 
-                if should_extract:
-                    self.link_manager.extract_links(soup, url, depth + 1, self._should_crawl_url)
+                if should_extract and not self._should_skip_discovery(result):
+                    self.link_manager.extract_links(
+                        soup, url, depth + 1, self._should_crawl_url,
+                        self.config.get('max_links_per_url', 0)
+                    )
+
+            elif (response.headers.get('content-type', '').lower().startswith('application/pdf') or
+                  urlparse(url).path.lower().endswith('.pdf')):
+                try:
+                    from pypdf import PdfReader
+                    reader = PdfReader(BytesIO(response.content))
+                    text = '\n'.join((page.extract_text() or '') for page in reader.pages)
+                    result['pdf_pages'] = len(reader.pages)
+                    result['pdf_text'] = text[:500000]
+                    result['pdf_metadata'] = dict(reader.metadata or {})
+                    result['word_count'] = len(re.findall(r'\b\w+\b', text))
+                except Exception as pdf_error:
+                    result['pdf_error'] = str(pdf_error)
+            elif (response.headers.get('content-type', '').lower().startswith(('application/x-shockwave-flash', 'application/vnd.adobe.flash.movie')) or
+                  urlparse(url).path.lower().endswith('.swf')):
+                result['media_type'] = 'swf'
+                result['media_metadata'] = {'format': 'SWF', 'bytes': len(response.content)}
+                result['swf_detected'] = True
+            elif response.headers.get('content-type', '').lower().startswith(('image/', 'video/', 'audio/')):
+                result['media_metadata'] = {
+                    'format': result['content_type'],
+                    'bytes': len(response.content),
+                    'magic_bytes': response.content[:12].hex()
+                }
 
             # Populate linked_from after all link collection is complete
             result['linked_from'] = self.link_manager.get_source_pages(url)
@@ -1031,13 +1255,30 @@ class WebCrawler:
                 error_type=classify_fetch_error(e)
             )
 
+    def _wait_for_request_slot(self):
+        """Apply the configured crawl delay to every outbound HTTP request."""
+        if self.rate_limiter:
+            self.rate_limiter.acquire()
+
+    def _defer_after_rate_limit(self, response, attempt):
+        """Honor Retry-After or apply a conservative shared 429 cooldown."""
+        retry_after = response.headers.get('retry-after', '').strip()
+        try:
+            cooldown = float(retry_after)
+        except (TypeError, ValueError):
+            cooldown = min(10 * (2 ** attempt), 60)
+        cooldown = max(1, min(cooldown, 120))
+        if self.rate_limiter:
+            self.rate_limiter.defer(cooldown)
+        print(f"Rate limited (429), pausing all workers for {cooldown:.1f} seconds...")
+
     async def _crawl_url_with_javascript(self, url, depth):
         """Crawl a single URL using JavaScript rendering"""
         start_time = time.time()
 
         try:
             # Render page with JavaScript
-            html_content, status_code, error = await self.js_renderer.render_page(url)
+            html_content, status_code, error, screenshot_path, js_errors, archive_path, render_diagnostics = await self.js_renderer.render_page(url)
 
             if error:
                 return self.seo_extractor.create_empty_result(
@@ -1094,7 +1335,17 @@ class WebCrawler:
                 'schema_org': [],
                 'linked_from': [],
                 'javascript_rendered': True
+                , 'screenshot_path': screenshot_path
+                , 'javascript_errors': js_errors
+                , 'rendered_archive_path': archive_path
+                , 'render_diagnostics': render_diagnostics
             }
+            snapshot_limit = int(self.config.get('html_snapshot_limit', 500000) or 500000)
+            result['source_html'] = ''
+            result['rendered_html'] = html_content[:snapshot_limit]
+            result['extracted_text'] = ''
+            result['snapshot_type'] = 'rendered'
+            result['snapshot_captured_at'] = datetime.utcnow().isoformat() + 'Z'
 
             # Parse HTML
             soup = BeautifulSoup(html_content, 'html.parser')
@@ -1107,9 +1358,23 @@ class WebCrawler:
             self.seo_extractor.extract_json_ld(soup, result)
             self.seo_extractor.extract_analytics_tracking(soup, html_content, result)
             self.seo_extractor.extract_images(soup, url, result)
+            self.seo_extractor.extract_resources(soup, url, result)
+            self.seo_extractor.extract_advanced_directives(soup, url, result)
+            self._enqueue_special_directives(result, depth)
             self.seo_extractor.extract_link_counts(soup, result, self.base_domain)
             self.seo_extractor.extract_hreflang(soup, result)
             self.seo_extractor.extract_schema_org(soup, result)
+            self.seo_extractor.extract_accessibility(soup, result)
+            self.seo_extractor.validate_html(html_content, result)
+            from src.core.content_analysis import analyze_content
+            result['content_analysis'] = analyze_content(soup, self.config.get('content_area_selector', ''))
+            result['extracted_text'] = (result.get('content_analysis') or {}).get('content_text', '')
+            self.seo_extractor.extract_custom(
+                html_content, result, self.config.get('custom_extractions', [])
+            )
+            self.seo_extractor.extract_custom_search(
+                html_content, result, self.config.get('custom_searches', [])
+            )
 
             # Collect all links
             links_before = len(self.link_manager.all_links)
@@ -1143,7 +1408,7 @@ class WebCrawler:
                 (self.config['crawl_external'] and depth < self.config['max_depth'])
             )
 
-            if should_extract:
+            if should_extract and not self._should_skip_discovery(result):
                 self.link_manager.extract_links(soup, url, depth + 1, self._should_crawl_url)
 
             # Populate linked_from after all link collection is complete
@@ -1259,6 +1524,7 @@ class WebCrawler:
                 if self.issue_detector and self.config.get('enable_duplication_check', True):
                     print("Running duplication detection...")
                     duplication_threshold = self.config.get('duplication_threshold', 0.85)
+                    self.duplicate_groups = self.issue_detector.build_duplicate_groups(self.crawl_results, duplication_threshold)
                     self.issue_detector.detect_duplication_issues(self.crawl_results, duplication_threshold)
                     print(f"Duplication detection complete. Total issues: {len(self.issue_detector.get_issues())}")
 
@@ -1312,7 +1578,10 @@ class WebCrawler:
         def _head_check(link):
             url = link['target_url']
             try:
+                self._wait_for_request_slot()
                 resp = self.session.head(url, timeout=5, allow_redirects=True)
+                if resp.status_code == 429:
+                    self._defer_after_rate_limit(resp, 0)
                 link['target_status'] = resp.status_code
             except Exception:
                 link['target_status'] = 0
@@ -1322,13 +1591,72 @@ class WebCrawler:
         with ThreadPoolExecutor(max_workers=min(5, len(batch))) as pool:
             pool.map(_head_check, batch)
 
-    def _should_crawl_url(self, url):
+    def _should_skip_discovery(self, result):
+        directives = result.get('directives') or {}
+        robots = str(result.get('robots', '')).lower()
+        return ((self.config.get('respect_noindex') and (directives.get('noindex') or 'noindex' in robots)) or
+                (self.config.get('respect_nofollow') and (directives.get('nofollow') or 'nofollow' in robots)))
+
+    def _enqueue_special_directives(self, result, depth):
+        if (self.config.get('respect_canonical') or self.config.get('follow_canonical')) and result.get('canonical_url'):
+            self.link_manager.enqueue_url(result['canonical_url'], depth + 1, self._should_crawl_url)
+        if self.config.get('follow_meta_refresh') and result.get('meta_refresh'):
+            refresh = str(result['meta_refresh'])
+            match = re.search(r'url\s*=\s*(.+)$', refresh, re.I)
+            if match:
+                target = urljoin(result.get('url', ''), match.group(1).strip(' \t\"\''))
+                self.link_manager.enqueue_url(target, depth + 1, self._should_crawl_url)
+        if self.config.get('respect_next_prev'):
+            pagination = result.get('pagination') or {}
+            for target in (pagination.get('next'), pagination.get('prev')):
+                if target:
+                    self.link_manager.enqueue_url(target, depth + 1, self._should_crawl_url)
+
+    def _should_crawl_url(self, url, candidate_depth=None):
         """Check if URL should be crawled based on settings"""
         parsed = urlparse(url)
 
+        if parsed.fragment and not self.config.get('crawl_fragments', False):
+            return False
+
         # Check external domain policy
         if not self.config['crawl_external']:
-            if not self.link_manager.is_internal(url):
+            host = parsed.netloc.lower().split(':', 1)[0]
+            base_host = self.base_domain.lower().split(':', 1)[0]
+            subdomain_internal = self.config.get('crawl_all_subdomains') and host.endswith('.' + base_host)
+            if not subdomain_internal and not self.link_manager.is_internal(url):
+                return False
+
+        if not self.config.get('crawl_outside_start_folder', True) and self.base_url:
+            start_path = urlparse(self.base_url).path.rstrip('/') or '/'
+            candidate_path = parsed.path.rstrip('/') or '/'
+            if not (candidate_path == start_path.rstrip('/') or candidate_path.startswith(start_path.rstrip('/') + '/')):
+                return False
+        if self.config.get('respect_hsts') and parsed.scheme == 'http' and parsed.netloc.lower() in self._hsts_hosts:
+            return False
+
+        if self.config.get('max_url_length', 0) and len(url) > self.config['max_url_length']:
+            return False
+        if self.config.get('max_query_strings', 0) and len(parsed.query.split('&')) > self.config['max_query_strings']:
+            return False
+        if self.config.get('max_folder_depth', 0):
+            folder_depth = len([part for part in parsed.path.split('/') if part])
+            if folder_depth > self.config['max_folder_depth']:
+                return False
+
+        # Apply crawl quotas before enqueueing a URL. Include both already
+        # crawled results and queued discoveries so concurrent workers cannot
+        # substantially exceed the configured limits.
+        if self.config.get('max_urls_per_depth', 0) and candidate_depth is not None:
+            depth_count = sum(1 for row in self.crawl_results if row.get('depth') == candidate_depth)
+            depth_count += sum(1 for queued_url, queued_depth in self.link_manager.discovered_urls if queued_depth == candidate_depth)
+            if depth_count >= self.config['max_urls_per_depth']:
+                return False
+        if self.config.get('max_urls_per_subdomain', 0):
+            candidate_host = parsed.netloc.lower().split(':', 1)[0]
+            subdomain_count = sum(1 for row in self.crawl_results if urlparse(row.get('url', '')).netloc.lower().split(':', 1)[0] == candidate_host)
+            subdomain_count += sum(1 for queued_url, _ in self.link_manager.discovered_urls if urlparse(queued_url).netloc.lower().split(':', 1)[0] == candidate_host)
+            if subdomain_count >= self.config['max_urls_per_subdomain']:
                 return False
 
         # Check robots.txt
@@ -1378,7 +1706,10 @@ class WebCrawler:
                     # instead of rp.read() which uses urllib with Python's
                     # default UA — many servers return 403 for that, causing
                     # RobotFileParser to set disallow_all=True and block everything.
+                    self._wait_for_request_slot()
                     response = self.session.get(robots_url, timeout=10)
+                    if response.status_code == 429:
+                        self._defer_after_rate_limit(response, 0)
                     if response.status_code in (401, 403):
                         rp.disallow_all = True
                     elif response.status_code >= 400:

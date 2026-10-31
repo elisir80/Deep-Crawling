@@ -19,6 +19,7 @@ class RateLimiter:
         self.requests_per_second = max(0.01, requests_per_second)  # Minimum rate
         self.min_interval = 1.0 / self.requests_per_second if self.requests_per_second > 0 else 0
         self.last_request_time = 0
+        self.blocked_until = 0
         self.lock = threading.Lock()
 
     def acquire(self):
@@ -28,14 +29,22 @@ class RateLimiter:
         """
         with self.lock:
             now = time.time()
-            time_since_last = now - self.last_request_time
+            next_request_time = max(
+                self.last_request_time + self.min_interval,
+                self.blocked_until,
+            )
 
-            if time_since_last < self.min_interval:
-                sleep_time = self.min_interval - time_since_last
+            if now < next_request_time:
+                sleep_time = next_request_time - now
                 time.sleep(sleep_time)
                 self.last_request_time = time.time()
             else:
                 self.last_request_time = now
+
+    def defer(self, seconds):
+        """Pause all workers until a shared server cooldown has elapsed."""
+        with self.lock:
+            self.blocked_until = max(self.blocked_until, time.time() + max(0, seconds))
 
     def update_rate(self, requests_per_second):
         """Update the rate limit dynamically"""

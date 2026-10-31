@@ -11,6 +11,7 @@ from contextlib import contextmanager
 
 # Database file location (same as auth database) - stored in data/ for Docker volume persistence
 import os
+import secrets
 DB_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'users.db')
 
 @contextmanager
@@ -94,6 +95,14 @@ def init_crawl_tables():
                 json_ld TEXT,
                 analytics TEXT,
                 images TEXT,
+                resources TEXT,
+                accessibility TEXT,
+                custom_extractions TEXT,
+                directives TEXT,
+                content_fingerprint TEXT,
+                duplicate_group TEXT,
+                duplicate_similarity REAL,
+                advanced_data TEXT,
                 hreflang TEXT,
                 schema_org TEXT,
                 redirects TEXT,
@@ -115,6 +124,23 @@ def init_crawl_tables():
         # Migration: add error_type column to existing crawled_urls tables
         try:
             cursor.execute('ALTER TABLE crawled_urls ADD COLUMN error_type TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        try:
+            cursor.execute('ALTER TABLE crawled_urls ADD COLUMN resources TEXT')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        for column, column_type in (
+            ('accessibility', 'TEXT'), ('custom_extractions', 'TEXT'),
+            ('directives', 'TEXT'), ('content_fingerprint', 'TEXT'),
+            ('duplicate_group', 'TEXT'), ('duplicate_similarity', 'REAL')
+        ):
+            try:
+                cursor.execute(f'ALTER TABLE crawled_urls ADD COLUMN {column} {column_type}')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+        try:
+            cursor.execute('ALTER TABLE crawled_urls ADD COLUMN advanced_data TEXT')
         except sqlite3.OperationalError:
             pass  # Column already exists
 
@@ -173,6 +199,61 @@ def init_crawl_tables():
                 UNIQUE(crawl_id, url)
             )
         ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS crawl_shares (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                crawl_id INTEGER NOT NULL,
+                owner_user_id INTEGER,
+                share_token TEXT UNIQUE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                FOREIGN KEY (crawl_id) REFERENCES crawls(id) ON DELETE CASCADE
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS crawl_schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT NOT NULL,
+                url TEXT NOT NULL, mode TEXT DEFAULT 'spider', interval_seconds INTEGER DEFAULT 86400,
+                next_run_at TIMESTAMP, timezone TEXT DEFAULT 'UTC', recipients TEXT, enabled INTEGER DEFAULT 1,
+                settings_snapshot TEXT, last_run_at TIMESTAMP, last_status TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
+        try:
+            cursor.execute("ALTER TABLE crawl_schedules ADD COLUMN timezone TEXT DEFAULT 'UTC'")
+        except sqlite3.OperationalError:
+            pass
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS crawl_projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT NOT NULL,
+                path TEXT NOT NULL, retention_days INTEGER DEFAULT 90, storage_mode TEXT DEFAULT 'full',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS seo_rank_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, crawl_id INTEGER,
+                keyword TEXT NOT NULL, url TEXT, position INTEGER, country TEXT DEFAULT 'global',
+                device TEXT DEFAULT 'desktop', serp_features TEXT, captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (crawl_id) REFERENCES crawls(id) ON DELETE CASCADE
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS seo_cwv_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, crawl_id INTEGER,
+                url TEXT NOT NULL, lcp REAL, inp REAL, cls REAL, ttfb REAL, fcp REAL,
+                passed INTEGER, captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (crawl_id) REFERENCES crawls(id) ON DELETE CASCADE
+            )
+        ''')
+
+        # Forward-compatible migration for competitor rank tracking.
+        rank_columns = {row[1] for row in cursor.execute('PRAGMA table_info(seo_rank_snapshots)').fetchall()}
+        if 'competitor' not in rank_columns:
+            cursor.execute('ALTER TABLE seo_rank_snapshots ADD COLUMN competitor TEXT')
 
         # Create indexes for performance
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_crawls_user_status ON crawls(user_id, status)')
@@ -284,9 +365,24 @@ def save_url_batch(crawl_id, urls):
                     json.dumps(url_data.get('og_tags', {})),
                     json.dumps(url_data.get('twitter_tags', {})),
                     json.dumps(url_data.get('json_ld', [])),
-                    json.dumps(url_data.get('analytics', {})),
-                    json.dumps(url_data.get('images', [])),
-                    json.dumps(url_data.get('hreflang', [])),
+                json.dumps(url_data.get('analytics', {})),
+                json.dumps(url_data.get('images', [])),
+                json.dumps(url_data.get('resources', [])),
+                json.dumps(url_data.get('accessibility', {})),
+                json.dumps(url_data.get('custom_extractions', {})),
+                json.dumps(url_data.get('directives', {})),
+                url_data.get('content_fingerprint'),
+                url_data.get('duplicate_group'),
+                url_data.get('duplicate_similarity'),
+                json.dumps({key: url_data.get(key) for key in (
+                    'pagination', 'amp_url', 'meta_refresh', 'srcset', 'http_headers',
+                    'cookies', 'security', 'html_validation', 'content_analysis',
+                    'pdf_pages', 'pdf_text', 'pdf_metadata', 'pdf_error',
+                    'screenshot_path', 'rendered_archive_path', 'javascript_errors',
+                    'media_type', 'media_metadata', 'swf_detected', 'custom_search', 'mobile_alternate', 'duplicate_md5', 'duplicate_simhash',
+                    'source_html', 'rendered_html', 'extracted_text', 'snapshot_type', 'snapshot_captured_at', 'render_diagnostics'
+                ) if key in url_data}, ensure_ascii=False, default=str),
+                json.dumps(url_data.get('hreflang', [])),
                     json.dumps(url_data.get('schema_org', [])),
                     json.dumps(url_data.get('redirects', [])),
                     json.dumps(url_data.get('linked_from', [])),
@@ -298,16 +394,20 @@ def save_url_batch(crawl_id, urls):
                 )
                 rows.append(row)
 
-            cursor.executemany('''
+            placeholders = ', '.join('?' for _ in rows[0])
+            cursor.executemany(f'''
                 INSERT INTO crawled_urls (
                     crawl_id, url, status_code, content_type, size, is_internal, depth,
                     title, meta_description, h1, h2, h3, word_count,
                     canonical_url, lang, charset, viewport, robots,
-                    meta_tags, og_tags, twitter_tags, json_ld, analytics, images,
+                    meta_tags, og_tags, twitter_tags, json_ld, analytics, images, resources,
+                    accessibility, custom_extractions, directives, content_fingerprint,
+                    duplicate_group, duplicate_similarity,
+                    advanced_data,
                     hreflang, schema_org, redirects, linked_from,
                     external_links, internal_links, response_time, javascript_rendered,
                     error_type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES ({placeholders})
             ''', rows)
 
             print(f"Saved {len(urls)} URLs to database for crawl {crawl_id}")
@@ -510,13 +610,22 @@ def load_crawled_urls(crawl_id, limit=None, offset=0):
                 url_data = dict(row)
                 # Parse JSON fields
                 for field in ['h2', 'h3', 'meta_tags', 'og_tags', 'twitter_tags',
-                             'json_ld', 'analytics', 'images', 'hreflang',
+                             'json_ld', 'analytics', 'images', 'resources', 'accessibility',
+                             'custom_extractions', 'directives', 'hreflang',
                              'schema_org', 'redirects', 'linked_from']:
                     if url_data.get(field):
                         try:
                             url_data[field] = json.loads(url_data[field])
                         except:
                             url_data[field] = []
+
+                if url_data.get('advanced_data'):
+                    try:
+                        advanced = json.loads(url_data['advanced_data'])
+                        if isinstance(advanced, dict):
+                            url_data.update(advanced)
+                    except (TypeError, ValueError):
+                        pass
 
                 urls.append(url_data)
 
@@ -567,6 +676,44 @@ def load_crawl_issues(crawl_id, limit=None, offset=0):
     except Exception as e:
         print(f"Error loading issues: {e}")
         return []
+
+def create_crawl_share(crawl_id, owner_user_id=None, expires_at=None):
+    """Create a revocable-by-expiry read-only share token for a crawl."""
+    token = secrets.token_urlsafe(32)
+    try:
+        with get_db() as conn:
+            conn.execute('''INSERT INTO crawl_shares
+                (crawl_id, owner_user_id, share_token, expires_at) VALUES (?, ?, ?, ?)''',
+                (crawl_id, owner_user_id, token, expires_at))
+        return token
+    except Exception as exc:
+        print(f"Error creating crawl share: {exc}")
+        return None
+
+def get_crawl_share(token):
+    """Return a share only when it exists and has not expired."""
+    try:
+        with get_db() as conn:
+            row = conn.execute('''SELECT * FROM crawl_shares
+                WHERE share_token = ? AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)''', (token,)).fetchone()
+            return dict(row) if row else None
+    except Exception as exc:
+        print(f"Error loading crawl share: {exc}")
+        return None
+
+def revoke_crawl_share(token, owner_user_id=None):
+    """Revoke a crawl share owned by the requesting user."""
+    try:
+        with get_db() as conn:
+            query = 'DELETE FROM crawl_shares WHERE share_token = ?'
+            params = [token]
+            if owner_user_id is not None:
+                query += ' AND owner_user_id = ?'; params.append(owner_user_id)
+            cursor = conn.execute(query, params)
+            return cursor.rowcount > 0
+    except Exception as exc:
+        print(f"Error revoking crawl share: {exc}")
+        return False
 
 def get_resume_data(crawl_id):
     """Get all data needed to resume a crawl"""
@@ -656,3 +803,57 @@ def get_database_size_mb():
     except Exception as e:
         print(f"Error getting database size: {e}")
         return 0
+
+def create_schedule(user_id, name, url, mode='spider', interval_seconds=86400, recipients=None, settings=None, timezone='UTC'):
+    with get_db() as conn:
+        cur = conn.execute('''INSERT INTO crawl_schedules
+            (user_id,name,url,mode,interval_seconds,next_run_at,timezone,recipients,settings_snapshot)
+            VALUES (?,?,?,?,?,datetime('now'),?,?,?)''',
+            (user_id, name, url, mode, max(1, int(interval_seconds)), timezone or 'UTC', json.dumps(recipients or []), json.dumps(settings or {})))
+        return cur.lastrowid
+
+def list_schedules(user_id):
+    with get_db() as conn:
+        return [dict(row) for row in conn.execute('SELECT * FROM crawl_schedules WHERE user_id=? ORDER BY id DESC', (user_id,))]
+
+def delete_schedule(schedule_id, user_id):
+    with get_db() as conn:
+        cur = conn.execute('DELETE FROM crawl_schedules WHERE id=? AND user_id=?', (schedule_id, user_id))
+        return cur.rowcount > 0
+
+def save_rank_snapshot(user_id, snapshot, crawl_id=None):
+    with get_db() as conn:
+        cur=conn.execute('''INSERT INTO seo_rank_snapshots
+            (user_id,crawl_id,keyword,url,position,country,device,serp_features,captured_at,competitor)
+            VALUES (?,?,?,?,?,?,?,?,?,?)''',(user_id,crawl_id,snapshot.get('keyword',''),snapshot.get('url'),
+            snapshot.get('position'),snapshot.get('country','global'),snapshot.get('device','desktop'),
+            json.dumps(snapshot.get('serp_features',[])),snapshot.get('captured_at'),snapshot.get('competitor')))
+        return cur.lastrowid
+
+def list_rank_snapshots(user_id, keyword=None, url=None, limit=500):
+    with get_db() as conn:
+        query='SELECT * FROM seo_rank_snapshots WHERE user_id=?'; args=[user_id]
+        if keyword: query+=' AND keyword=?'; args.append(keyword)
+        if url: query+=' AND url=?'; args.append(url)
+        query+=' ORDER BY captured_at DESC LIMIT ?'; args.append(int(limit))
+        rows=[dict(x) for x in conn.execute(query,args)]
+        for row in rows:
+            row['serp_features']=json.loads(row.get('serp_features') or '[]')
+        return rows
+
+def save_cwv_snapshot(user_id, snapshot, crawl_id=None):
+    with get_db() as conn:
+        cur=conn.execute('''INSERT INTO seo_cwv_snapshots
+            (user_id,crawl_id,url,lcp,inp,cls,ttfb,fcp,passed,captured_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)''',(user_id,crawl_id,snapshot.get('url',''),snapshot.get('lcp'),
+            snapshot.get('inp'),snapshot.get('cls'),snapshot.get('ttfb'),snapshot.get('fcp'),
+            int(bool(snapshot.get('passed'))),snapshot.get('snapshot')))
+        return cur.lastrowid
+
+def list_cwv_snapshots(user_id, url=None, limit=500):
+    with get_db() as conn:
+        if url:
+            rows=conn.execute('SELECT * FROM seo_cwv_snapshots WHERE user_id=? AND url=? ORDER BY captured_at DESC LIMIT ?', (user_id,url,int(limit)))
+        else:
+            rows=conn.execute('SELECT * FROM seo_cwv_snapshots WHERE user_id=? ORDER BY captured_at DESC LIMIT ?', (user_id,int(limit)))
+        return [dict(x) for x in rows]

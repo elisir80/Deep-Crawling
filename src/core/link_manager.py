@@ -19,9 +19,11 @@ class LinkManager:
         self.urls_lock = threading.Lock()
         self.links_lock = threading.Lock()
 
-    def extract_links(self, soup, current_url, depth, should_crawl_callback):
+    def extract_links(self, soup, current_url, depth, should_crawl_callback, max_links=0):
         """Extract links from HTML and add to discovery queue"""
         links = soup.find_all('a', href=True)
+        if max_links and max_links > 0:
+            links = links[:max_links]
 
         for link in links:
             href = link['href'].strip()
@@ -50,9 +52,34 @@ class LinkManager:
                     clean_url != current_url):
 
                     # Check if this URL should be crawled
-                    if should_crawl_callback(clean_url):
+                    try:
+                        allowed = should_crawl_callback(clean_url, depth)
+                    except TypeError:
+                        # Preserve compatibility with callers using the original
+                        # one-argument callback contract.
+                        allowed = should_crawl_callback(clean_url)
+                    if allowed:
                         self.all_discovered_urls.add(clean_url)
                         self.discovered_urls.append((clean_url, depth))
+
+    def enqueue_url(self, url, depth, should_crawl_callback):
+        """Queue a canonical/pagination URL while preserving deduplication."""
+        parsed = urlparse(url)
+        clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        if parsed.query:
+            clean_url += f"?{parsed.query}"
+        with self.urls_lock:
+            if clean_url in self.visited_urls or clean_url in self.all_discovered_urls:
+                return False
+            try:
+                allowed = should_crawl_callback(clean_url, depth)
+            except TypeError:
+                allowed = should_crawl_callback(clean_url)
+            if not allowed:
+                return False
+            self.all_discovered_urls.add(clean_url)
+            self.discovered_urls.append((clean_url, depth))
+            return True
 
     def collect_all_links(self, soup, source_url, crawl_results):
         """Collect all links for the Links tab display"""

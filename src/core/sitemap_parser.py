@@ -7,10 +7,15 @@ from urllib.parse import urlparse
 class SitemapParser:
     """Discovers and parses sitemap.xml files"""
 
-    def __init__(self, session, base_domain, timeout=10):
+    def __init__(self, session, base_domain, timeout=10, request_wait=None):
         self.session = session
         self.base_domain = base_domain
         self.timeout = timeout
+        self.request_wait = request_wait
+
+    def _wait_for_request(self):
+        if self.request_wait:
+            self.request_wait()
 
     def discover_sitemaps(self, base_url):
         """
@@ -23,7 +28,7 @@ class SitemapParser:
         base_domain = f"{parsed_base.scheme}://{parsed_base.netloc}"
 
         # Common sitemap locations
-        sitemap_urls = [
+        common_sitemap_urls = [
             f"{base_domain}/sitemap.xml",
             f"{base_domain}/sitemap_index.xml",
             f"{base_domain}/sitemaps.xml",
@@ -32,7 +37,8 @@ class SitemapParser:
 
         # Check robots.txt for sitemap declarations
         robots_sitemaps = self._get_sitemaps_from_robots(base_domain)
-        sitemap_urls.extend(robots_sitemaps)
+        sitemap_urls = robots_sitemaps or common_sitemap_urls
+        sitemap_urls = list(dict.fromkeys(sitemap_urls))
 
         print(f"Discovering sitemaps for {base_domain}...")
 
@@ -51,6 +57,7 @@ class SitemapParser:
         sitemaps = []
         try:
             robots_url = f"{base_domain}/robots.txt"
+            self._wait_for_request()
             response = self.session.get(robots_url, timeout=self.timeout)
 
             if response.status_code == 200:
@@ -77,6 +84,7 @@ class SitemapParser:
 
         try:
             print(f"Parsing sitemap: {sitemap_url}")
+            self._wait_for_request()
             response = self.session.get(sitemap_url, timeout=self.timeout)
 
             if response.status_code != 200:

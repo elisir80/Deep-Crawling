@@ -2,21 +2,25 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>LibreCrawl - SEO Spider</title>
+    <title>Deep Crawling - SEO Spider</title>
     <link rel="stylesheet" href="/static/css/styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
 </head>
 <body>
+    <!-- Credential fields are associated with this non-submitting form to keep browser autofill/DOM validation standards-compliant. -->
+    <form id="credentialForm" autocomplete="off" onsubmit="return false" hidden></form>
     <div class="app-container">
         <!-- Header -->
         <header class="header">
             <div class="header-content">
-                <h1 class="app-title">LibreCrawl</h1>
+                <h1 class="app-title">Deep Crawling</h1>
                 <div class="header-actions">
                     <span id="userInfo" style="margin-right: 15px; color: #6b7280; font-size: 14px;"></span>
                     <button class="btn btn-secondary" onclick="openDashboard()">Dashboard</button>
                     <button class="btn btn-secondary" onclick="openSettings()">Settings</button>
+                    <button class="btn btn-secondary" onclick="openUserManagement()">Users</button>
+                    <button class="btn btn-secondary" onclick="exportAiRemediationReport()" title="Export AI Remediation Report">AI Report .md</button>
                     <button class="btn btn-secondary" onclick="exportData()">Export</button>
                     <button class="btn btn-success" id="saveCrawlBtn" onclick="saveCrawl()" disabled>Save Crawl</button>
                     <button class="btn btn-primary" id="loadCrawlBtn" onclick="loadCrawl()">Load Crawl</button>
@@ -37,6 +41,18 @@
                         placeholder="https://example.com"
                         onkeypress="handleUrlKeypress(event)"
                     >
+                </div>
+                <div class="input-group">
+                    <label for="crawlMode" class="input-label">Crawl mode</label>
+                    <select id="crawlMode" class="url-input" onchange="updateCrawlModeHelp()">
+                        <option value="spider">Spider (discover links)</option>
+                        <option value="list">List (one URL per line)</option>
+                        <option value="sitemap">XML Sitemap</option>
+                    </select>
+                </div>
+                <div class="input-group" id="seedUrlsGroup" style="display:none;">
+                    <label for="seedUrls" class="input-label">Seed URLs / sitemap URL</label>
+                    <textarea id="seedUrls" class="url-input" rows="2" placeholder="One URL per line"></textarea>
                 </div>
                 <div class="control-buttons">
                     <button id="startBtn" class="btn btn-primary" onclick="toggleCrawl()">
@@ -72,7 +88,7 @@
             <!-- Sidebar -->
             <aside class="sidebar">
                 <div class="sidebar-section">
-                    <h3 class="sidebar-title">Filters</h3>
+                    <div class="sidebar-heading"><h3 class="sidebar-title">Filters</h3><button class="sidebar-toggle" type="button" onclick="toggleSidebar()" aria-label="Toggle filters">‹</button></div>
                     <div class="filter-tree">
                         <div class="filter-group">
                             <div class="filter-item" onclick="toggleFilter('internal')">
@@ -192,10 +208,50 @@
                         <button class="tab-btn" onclick="switchTab('issues')">Issues</button>
                         <button class="tab-btn" onclick="switchTab('pagespeed')">PageSpeed</button>
                         <button class="tab-btn" onclick="switchTab('visualization')">Visualization</button>
+                        <button class="tab-btn" onclick="switchTab('semantic-search')">Semantic Search</button>
+                        <button class="tab-btn" onclick="switchTab('integrations')">Integrations</button>
+                        <button class="tab-btn" onclick="openProjectsWorkspace()">Projects</button>
+                        <button class="tab-btn" onclick="switchTab('analysis')">Crawl Analysis</button>
+                        <button class="tab-btn" onclick="switchTab('seo-intelligence')">SEO Intelligence</button>
+                        <button class="tab-btn" onclick="switchTab('utilities')">SEO Utilities</button>
+                    </div>
+                    <div class="spider-navigation">
+                    <select id="spiderView" class="url-input spider-view-select" onchange="switchSpiderView(this.value)" aria-label="Spider view"><option value="all">Overview columns</option><option value="internal">Internal</option><option value="external">External</option><option value="security">Security</option><option value="response">Response Codes</option><option value="url">URL</option><option value="titles">Page Titles</option><option value="meta">Meta Description</option><option value="headings">Headings</option><option value="content">Content</option><option value="images">Images</option><option value="canonicals">Canonicals</option><option value="pagination">Pagination</option><option value="directives">Directives</option><option value="hreflang">Hreflang</option><option value="javascript">JavaScript</option><option value="amp">AMP</option><option value="structured">Structured Data</option><option value="sitemaps">Sitemaps</option><option value="mobile">Mobile</option><option value="accessibility">Accessibility</option><option value="validation">Validation</option><option value="analytics">Analytics</option><option value="search-console">Search Console</option><option value="links">Link Metrics</option><option value="ai">AI</option><option value="changes">Change Detection</option></select>
+                    <div class="spider-tab-strip" role="tablist" aria-label="Spider datasets">
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('page-titles')">Page Titles</button>
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('meta-description')">Meta Description</button>
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('headings')">Headings</button>
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('images')">Images</button>
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('canonicals')">Canonicals</button>
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('directives')">Directives</button>
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('hreflang')">Hreflang</button>
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('javascript')">JavaScript</button>
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('structured-data')">Structured Data</button>
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('accessibility')">Accessibility</button>
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('validation')">Validation</button>
+                        <button class="btn btn-secondary" onclick="openSpiderDatasetTab('resources')">Resources</button>
+                    </div>
                     </div>
 
                     <div class="tab-content">
                         <div id="overview-tab" class="tab-pane active">
+                            <div class="overview-summary" aria-label="Crawl summary">
+                                <div class="overview-card"><span class="overview-card-label">URLs discovered</span><strong id="overviewDiscovered">0</strong><span class="overview-card-hint">discovery queue</span></div>
+                                <div class="overview-card"><span class="overview-card-label">URLs crawled</span><strong id="overviewCrawled">0</strong><span class="overview-card-hint">processed pages</span></div>
+                                <div class="overview-card"><span class="overview-card-label">Issues</span><strong id="overviewIssues">0</strong><span class="overview-card-hint">detected findings</span></div>
+                                <div class="overview-card"><span class="overview-card-label">Crawl speed</span><strong id="overviewSpeed">0</strong><span class="overview-card-hint">URLs / sec</span></div>
+                            </div>
+                            <div class="spider-dataset-toolbar">
+                                <strong>Spider dataset workspace</strong>
+                                <input id="spiderDatasetCrawlId" type="number" class="url-input" placeholder="Saved crawl ID">
+                                <select id="spiderDatasetName" class="url-input">
+                                    <option value="internal">Internal</option><option value="external">External</option><option value="response-codes">Response Codes</option><option value="page-titles">Page Titles</option><option value="meta-description">Meta Description</option><option value="headings">Headings</option><option value="content">Content</option><option value="images">Images</option><option value="canonicals">Canonicals</option><option value="pagination">Pagination</option><option value="directives">Directives</option><option value="hreflang">Hreflang</option><option value="javascript">JavaScript</option><option value="amp">AMP</option><option value="structured-data">Structured Data</option><option value="sitemaps">Sitemaps</option><option value="mobile">Mobile</option><option value="accessibility">Accessibility</option><option value="validation">Validation</option><option value="analytics">Analytics</option><option value="search-console">Search Console</option><option value="link-metrics">Link Metrics</option><option value="ai">AI</option><option value="changes">Change Detection</option><option value="resources">Resources</option>
+                                </select>
+                                <button class="btn btn-secondary" onclick="loadSpiderDataset()">Load tab</button>
+                                <button class="btn btn-secondary" onclick="exportSpiderDataset()">Export JSON</button>
+                                <span id="spiderDatasetCount" class="setting-help"></span>
+                            </div>
+                            <div class="table-container spider-dataset-container"><table class="data-table" id="spiderDatasetTable"><thead></thead><tbody></tbody></table></div>
                             <div class="table-container">
                                 <table class="data-table" id="overviewTable">
                                     <thead>
@@ -409,11 +465,177 @@
                             </div>
                         </div>
 
+                        <div id="semantic-search-tab" class="tab-pane">
+                            <div class="visualization-container">
+                                <h3>Semantic Search</h3>
+                                <div class="input-group"><input id="semanticQuery" class="url-input" placeholder="Search crawled content..."><button class="btn btn-primary" onclick="runSemanticSearch()">Local semantic search</button></div>
+                                <div class="input-group"><input id="embeddingApiKey" form="credentialForm" type="password" class="url-input" placeholder="Embedding API key (optional)"><input id="embeddingModel" class="url-input" value="text-embedding-3-small"><button class="btn btn-secondary" onclick="runEmbeddingSearch()">Embedding search</button></div>
+                                <div id="semanticResults"><p>Search the current crawl using local semantic ranking.</p></div>
+                            </div>
+                        </div>
+
+                        <div id="integrations-tab" class="tab-pane">
+                            <div class="visualization-container">
+                                <h3>Google Integrations</h3>
+                                <p>OAuth tokens are used only for this request and are never stored.</p>
+                                <div class="input-group"><label>Search Console site URL</label><input id="gscSite" class="url-input" placeholder="sc-domain:example.com"></div>
+                                <div class="input-group"><label>GA4 property ID</label><input id="gaProperty" class="url-input" placeholder="123456789"></div>
+                                <div class="input-group"><label>OAuth Bearer token</label><input id="googleToken" form="credentialForm" type="password" class="url-input"></div>
+                                <div class="input-group"><label>Start date</label><input id="googleStart" type="date" class="url-input"></div>
+                                <div class="input-group"><label>End date</label><input id="googleEnd" type="date" class="url-input"></div>
+                                <button class="btn btn-primary" onclick="runGoogleIntegration('gsc')">Query Search Console</button>
+                                <button class="btn btn-secondary" onclick="runGoogleIntegration('ga')">Query Analytics</button>
+                                <input id="gscInspectionUrl" class="url-input" placeholder="URL da ispezionare con URL Inspection">
+                                <input id="gscDimensions" class="url-input" value="query,page" placeholder="GSC dimensions, comma separated">
+                                <input id="gscFilterGroups" class="url-input" placeholder='GSC filter groups JSON (optional)'>
+                                <select id="gscSearchType" class="url-input"><option value="web">web</option><option value="image">image</option><option value="video">video</option><option value="news">news</option></select>
+                                <input id="gscSitemapUrl" class="url-input" placeholder="Specific sitemap URL (optional)">
+                                <button class="btn btn-secondary" onclick="runGscInspection()">Inspect URL</button>
+                                <button class="btn btn-secondary" onclick="runGscResources('sites')">List GSC sites</button>
+                                <button class="btn btn-secondary" onclick="runGscResources('sitemaps')">List GSC sitemaps</button>
+                                <select id="gaDimensions" class="url-input"><option value="date">date</option><option value="page">page</option><option value="sessionDefaultChannelGroup">channel</option><option value="country">country</option><option value="deviceCategory">device</option></select>
+                                <input id="gaMetrics" class="url-input" value="sessions,conversions,totalRevenue" placeholder="GA4 metrics, comma separated">
+                                <input id="gaDimensionFilter" class="url-input" placeholder='GA4 dimension filter JSON (optional)'>
+                                <label><input id="gaKeepEmpty" type="checkbox"> Keep empty rows</label>
+                                <label><input id="gaQuota" type="checkbox"> Request property quota</label>
+                                <button class="btn btn-secondary" onclick="runGa4Report()">Run GA4 report</button>
+                                <input id="pagespeedUrl" class="url-input" placeholder="URL for PageSpeed Insights">
+                                <select id="pagespeedStrategy" class="url-input"><option value="mobile">PageSpeed mobile</option><option value="desktop">PageSpeed desktop</option></select>
+                                <input id="pagespeedKey" form="credentialForm" type="password" class="url-input" placeholder="PageSpeed API key (not saved)">
+                                <button class="btn btn-secondary" onclick="runPageSpeedIntegration()">Run PageSpeed Insights</button>
+                                <input id="bingSite" class="url-input" placeholder="Bing site URL">
+                                <input id="bingToken" form="credentialForm" type="password" class="url-input" placeholder="Bing API key (not saved)">
+                                <input id="bingEndpoint" class="url-input" placeholder="Bing Webmaster endpoint (e.g. proxy or documented operation URL)">
+                                <select id="bingOperation" class="url-input"><option value="ranking">Ranking</option><option value="keywords">Keywords</option><option value="backlinks">Backlinks</option><option value="crawl">Crawl stats</option><option value="submit-url">Submit URL</option><option value="submit-sitemap">Submit sitemap</option></select>
+                                <input id="bingPayload" class="url-input" placeholder='Bing payload JSON, e.g. {"url":"https://example.com/page"}'>
+                                <button class="btn btn-secondary" onclick="runBingOperation()">Run Bing operation</button>
+                                <pre id="googleResults" style="white-space: pre-wrap; margin-top: 16px;"></pre>
+                                <hr>
+                                <h4>External Backlink Metrics</h4>
+                                <input id="backlinkEndpoint" class="url-input" placeholder="Optional custom endpoint (leave blank for official provider endpoint)">
+                                <input id="backlinkTarget" class="url-input" placeholder="https://example.com/page">
+                                <input id="backlinkProvider" class="url-input" value="generic" placeholder="ahrefs / majestic / moz / generic">
+                                <input id="backlinkToken" form="credentialForm" type="password" class="url-input" placeholder="Provider token (not saved)">
+                                <span class="setting-help">Ahrefs, Majestic and Moz use their configured official endpoint when this field is blank.</span>
+                                <button class="btn btn-secondary" onclick="runBacklinkMetrics()">Query backlink metrics</button>
+                                <pre id="backlinkResults" style="white-space: pre-wrap;"></pre>
+                                <hr>
+                                <h4>AI Crawl Analysis</h4>
+                                <textarea id="aiPrompt" class="url-input" rows="3" placeholder="Summarize the most important technical SEO issues."></textarea>
+                                <input id="aiApiKey" form="credentialForm" type="password" class="url-input" placeholder="AI API key (not saved)">
+                                <input id="aiEndpoint" class="url-input" value="https://api.openai.com/v1/chat/completions" placeholder="OpenAI-compatible endpoint">
+                                <button class="btn btn-primary" onclick="runAiAnalysis()">Analyze crawl with AI</button>
+                                <pre id="aiResults" style="white-space: pre-wrap;"></pre>
+                                <hr>
+                                <h4>Email Report Attachment</h4>
+                                <input id="reportEmail" type="email" class="url-input" placeholder="recipient@example.com">
+                                <input id="reportCrawlId" type="number" class="url-input" placeholder="Saved crawl ID">
+                                <select id="reportFormat" class="url-input"><option value="json">JSON attachment</option><option value="csv">CSV attachment</option></select>
+                                <button class="btn btn-secondary" onclick="sendReportEmail()">Send report attachment</button>
+                                <pre id="emailResult" style="white-space: pre-wrap;"></pre>
+                                <hr>
+                                <h4>Team / Cloud Sync</h4>
+                                <input id="cloudEndpoint" class="url-input" placeholder="https://team.example/api/crawls">
+                                <input id="cloudCrawlId" type="number" class="url-input" placeholder="Saved crawl ID">
+                                <input id="cloudToken" form="credentialForm" type="password" class="url-input" placeholder="Cloud token (not saved)">
+                                <button class="btn btn-secondary" onclick="syncCloudCrawl()">Sync crawl to cloud</button>
+                                <pre id="cloudResult" style="white-space: pre-wrap;"></pre>
+                                <hr>
+                                <h4>Enterprise workspace</h4>
+                                <p>Analisi aggregate locale, storico snapshot, report riproducibili e patch in sola anteprima. I deploy esterni richiedono approvazione.</p>
+                                <textarea id="enterpriseProjects" class="url-input" rows="3" placeholder='Portfolio JSON: [{"domain":"example.com","traffic":1200,"revenue":500,"conversions":12}]'></textarea>
+                                <hr>
+                                <h4>Projects & Scheduler</h4>
+                                <div class="input-group"><input id="projectCrawlId" type="number" class="url-input" placeholder="Saved crawl ID"><button class="btn btn-secondary" onclick="exportProjectArchive()">Export .librecrawl</button></div>
+                                <div class="input-group"><select id="historicalExportDataset" class="url-input"><option value="urls">URLs</option><option value="links">Links</option><option value="issues">Issues</option><option value="resources">Resources</option><option value="headers">HTTP Headers</option><option value="cookies">Cookies</option><option value="rendering">Rendering diagnostics</option></select><select id="historicalExportFormat" class="url-input"><option value="csv">CSV</option><option value="json">JSON</option></select><button class="btn btn-secondary" onclick="exportHistoricalDataset()">Export selected dataset</button></div>
+                                <div class="input-group"><input id="projectImportFile" type="file" accept=".librecrawl" class="url-input"><button class="btn btn-secondary" onclick="importProjectArchive()">Import .librecrawl</button></div>
+                                <div class="input-group"><input id="scheduleName" class="url-input" placeholder="Schedule name"><input id="scheduleUrl" class="url-input" placeholder="https://example.com"><input id="scheduleInterval" type="number" min="1" value="86400" class="url-input" placeholder="Interval seconds"><input id="scheduleTimezone" class="url-input" value="UTC" placeholder="Timezone"><input id="scheduleRecipients" class="url-input" placeholder="Emails comma separated"></div>
+                                <button class="btn btn-secondary" onclick="createCrawlSchedule()">Create schedule</button><button class="btn btn-secondary" onclick="startScheduleWorker()">Start scheduler worker</button><button class="btn btn-secondary" onclick="stopScheduleWorker()">Stop scheduler worker</button>
+                                <pre id="projectScheduleResults" style="white-space: pre-wrap;"></pre>
+                                <textarea id="enterpriseBotLogs" class="url-input" rows="3" placeholder='AI bot logs JSON: [{"bot":"GPTBot","status_code":200,"bytes":1200}]'></textarea>
+                                <input id="enterpriseAiDomain" class="url-input" placeholder="AI visibility target domain, e.g. example.com">
+                                <textarea id="enterpriseAiPrompts" class="url-input" rows="3" placeholder='AI observations JSON: [{"prompt":"best SEO tool","engine":"ChatGPT","answer":true,"citations":[{"url":"https://example.com/guide"}]}]'></textarea>
+                                <textarea id="enterpriseSnapshots" class="url-input" rows="3" placeholder='Snapshots JSON: [{"url":"https://example.com","source_html":"...","rendered_html":"..."}]'></textarea>
+                                <textarea id="enterpriseIssues" class="url-input" rows="3" placeholder='Patch issues JSON: [{"url":"https://example.com","issue":"missing title","patch":{"title":"New title"}}]'></textarea>
+                                <div class="input-group">
+                                    <button class="btn btn-primary" onclick="runEnterpriseDashboard()">Load enterprise dashboard</button>
+                                    <button class="btn btn-secondary" onclick="runEnterpriseCapabilities()">Audit capabilities</button>
+                                    <button class="btn btn-secondary" onclick="runEnterpriseHistory()">Compare page snapshots</button>
+                                    <button class="btn btn-secondary" onclick="runEnterprisePatches()">Preview remediation patches</button>
+                                    <button class="btn btn-secondary" onclick="applyEnterprisePatchesLocally()">Apply approved patches locally</button>
+                                    <button class="btn btn-secondary" onclick="runEnterpriseAiVisibility()">Analyze AI visibility</button>
+                                    <button class="btn btn-secondary" onclick="runEnterpriseReportTask()">Create async report</button>
+                                </div>
+                                <pre id="enterpriseResults" style="white-space: pre-wrap;"></pre>
+                                <h4>Enterprise next tools</h4>
+                                <select id="enterpriseNextTool" class="url-input"><option value="log-analyzer">Log File Analyzer</option><option value="rum-compare">CrUX/RUM compare</option><option value="crux">Official CrUX adapter</option><option value="migration">Migration Assistant</option><option value="security">Security SEO scanner</option><option value="content-governance">Content governance</option><option value="serp-volatility">SERP volatility</option><option value="brand-monitor">Brand/reputation monitor</option><option value="rich-results">Rich Results bulk</option><option value="crawl-replay">Crawl replay</option><option value="warehouse-export">Warehouse export</option><option value="warehouse-query">Warehouse SQL-like query</option><option value="product-intelligence">Product intelligence</option><option value="prioritize">Issue prioritization</option></select>
+                                <textarea id="enterpriseNextPayload" class="url-input" rows="4" placeholder='Payload JSON del tool selezionato'></textarea>
+                                <button class="btn btn-secondary" onclick="runEnterpriseNextTool()">Run enterprise tool</button>
+                                <pre id="enterpriseNextResults" style="white-space:pre-wrap;"></pre>
+                            </div>
+                        </div>
+
+                        <div id="seo-intelligence-tab" class="tab-pane">
+                            <div class="visualization-container">
+                                <h3>Native SEO Intelligence</h3>
+                                <p>Analisi locale sui dati del crawl, senza indice Ahrefs obbligatorio.</p>
+                                <div class="input-group">
+                                    <button class="btn btn-primary" onclick="loadNativeSeoDashboard()">Load SEO dashboard</button>
+                                    <button class="btn btn-secondary" onclick="runNativeSeoScore()">Calculate SEO score</button>
+                                </div>
+                                <pre id="nativeSeoDashboard" style="white-space:pre-wrap;"></pre>
+                                <h4>Keyword clustering e cannibalizzazione</h4>
+                                <input id="nativeKeywords" class="url-input" placeholder="keyword one, keyword two, best SEO tool">
+                                <button class="btn btn-secondary" onclick="runNativeKeywordTools()">Analyze keywords</button>
+                                <pre id="nativeKeywordResults" style="white-space:pre-wrap;"></pre>
+                                <h4>Rank Tracker snapshot</h4>
+                                <div class="input-group"><input id="rankKeyword" class="url-input" placeholder="Keyword"><input id="rankUrl" class="url-input" placeholder="URL"><input id="rankCompetitor" class="url-input" placeholder="Competitor domain (optional)"><input id="rankPosition" type="number" class="url-input" value="10"><input id="rankCountry" class="url-input" value="global"><select id="rankDevice" class="url-input"><option>desktop</option><option>mobile</option></select><button class="btn btn-secondary" onclick="saveNativeRankSnapshot()">Save snapshot</button></div>
+                                <pre id="nativeRankResults" style="white-space:pre-wrap;"></pre>
+                                <h4>Rank history and regression</h4>
+                                <textarea id="rankHistoryJson" class="url-input" rows="3" placeholder='Snapshots JSON: [{"keyword":"seo","url":"https://example.com","position":4,"country":"it","device":"mobile","serp_features":["ai_overview"]}]'></textarea>
+                                <button class="btn btn-secondary" onclick="runRankHistoryReport()">Analyze rank history</button>
+                                <h4>Lighthouse/Core Web Vitals regression</h4>
+                                <textarea id="lighthouseBefore" class="url-input" rows="2" placeholder='Before JSON: {"performance":90,"accessibility":95,"seo":100,"lcp":2.1,"cls":0.08}'></textarea>
+                                <textarea id="lighthouseAfter" class="url-input" rows="2" placeholder='After JSON: {"performance":80,"accessibility":95,"seo":98,"lcp":3.4,"cls":0.18}'></textarea>
+                                <button class="btn btn-secondary" onclick="runLighthouseRegression()">Check regression gate</button>
+                                <pre id="advancedSeoResults" style="white-space:pre-wrap;"></pre>
+                            </div>
+                        </div>
+
+                        <div id="analysis-tab" class="tab-pane">
+                            <div class="visualization-container"><h3>Crawl Analysis</h3><div id="analysisSummary"><p>Run a crawl to view aggregate analysis.</p></div><button class="btn btn-primary" onclick="loadAnalysisSummary()">Refresh Analysis</button><button class="btn btn-secondary" onclick="loadOrphans()">Orphan Pages</button><button class="btn btn-secondary" onclick="loadLinkMetrics()">Link Metrics</button><button class="btn btn-secondary" onclick="loadHttpAudit()">HTTP Audit</button><div class="input-group"><input id="oldCrawlId" type="number" class="url-input" placeholder="Old crawl ID"><input id="newCrawlId" type="number" class="url-input" placeholder="New crawl ID"><button class="btn btn-secondary" onclick="loadChangeDetection()">Compare crawls</button></div><div class="input-group"><input id="reportAnalysisCrawlId" type="number" class="url-input" placeholder="Saved crawl ID"><button class="btn btn-secondary" onclick="loadCrawlReport()">Load full report</button><button class="btn btn-secondary" onclick="downloadCrawlReport()">Download CSV report</button></div><pre id="analysisDetails" style="white-space: pre-wrap;"></pre></div>
+                        </div>
+
+                        <div id="utilities-tab" class="tab-pane">
+                            <div class="visualization-container">
+                                <h3>SEO Utilities</h3>
+                                <div class="input-group"><label>Robots.txt (optional, leave blank to fetch live)</label><textarea id="robotsText" class="url-input" rows="6" placeholder="User-agent: *\nDisallow: /private/"></textarea><input id="robotsSite" class="url-input" placeholder="Site URL, e.g. https://example.com"><input id="robotsUrl" class="url-input" placeholder="Target URL, e.g. https://example.com/private/page"><button class="btn btn-primary" onclick="runRobotsTest()">Test robots rule</button></div>
+                                <pre id="robotsResult" style="white-space: pre-wrap;"></pre>
+                                <div class="input-group"><label>Segment expression (field:value)</label><input id="segmentExpression" class="url-input" placeholder="status_code:200"><button class="btn btn-secondary" onclick="runSegment()">Filter segment</button></div>
+                                <pre id="segmentResult" style="white-space: pre-wrap;"></pre>
+                                <div class="input-group"><label>CDN host</label><input id="cdnHost" class="url-input" placeholder="cdn.example.com"><button class="btn btn-secondary" onclick="runCdnRewrite()">Apply CDN preview</button></div>
+                                <pre id="cdnResult" style="white-space: pre-wrap;"></pre>
+                                <div class="input-group"><label>URL rewrite</label><input id="rewriteUrl" class="url-input" placeholder="https://example.com/old?id=1"><input id="rewritePattern" class="url-input" placeholder="old"><input id="rewriteReplacement" class="url-input" placeholder="new"><button class="btn btn-secondary" onclick="runUrlRewrite()">Rewrite URL</button></div>
+                                <pre id="rewriteResult" style="white-space: pre-wrap;"></pre>
+                                <button class="btn btn-primary" onclick="downloadGeneratedSitemap()">Generate XML Sitemap from current crawl</button>
+                                <hr><h4>Priority audits</h4>
+                                <input id="priorityCron" class="url-input" value="0 9 * * 1-5" placeholder="Cron expression">
+                                <input id="priorityTimezone" class="url-input" value="Europe/Rome" placeholder="Timezone">
+                                <button class="btn btn-secondary" onclick="runPriorityCron()">Calculate next cron run</button>
+                                <textarea id="priorityRows" class="url-input" rows="3" placeholder='Rows JSON for resource/SPA audit'></textarea>
+                                <button class="btn btn-secondary" onclick="runPriorityResourceAudit()">Resource audit</button>
+                                <button class="btn btn-secondary" onclick="runPrioritySpaAudit()">SPA detection</button>
+                                <pre id="priorityResults" style="white-space:pre-wrap;"></pre>
+                            </div>
+                        </div>
+
                         <div id="visualization-tab" class="tab-pane">
                             <div class="visualization-container">
                                 <div class="visualization-header">
                                     <h3>Site Structure Visualization</h3>
                                     <div class="visualization-controls">
+                                        <input id="visualizationCrawlId" type="number" class="url-input" placeholder="Saved crawl ID">
+                                        <button class="btn btn-secondary" onclick="loadSavedVisualizationData()">Load saved crawl</button>
                                         <select id="vizLayout" onchange="changeLayout(this.value)">
                                             <option value="cose">Force-Directed</option>
                                             <option value="breadthfirst">Hierarchical</option>
@@ -557,6 +779,15 @@
                         </label>
                         <span class="setting-help">Include external domains in crawl</span>
                     </div>
+                    <div class="setting-group">
+                        <label class="checkbox-label"><input type="checkbox" id="crawlAllSubdomains"> Crawl all subdomains</label>
+                        <label class="checkbox-label"><input type="checkbox" id="crawlOutsideStartFolder" checked> Crawl outside start folder</label>
+                        <label class="checkbox-label"><input type="checkbox" id="respectHsts"> Respect HSTS policy</label>
+                        <label class="checkbox-label"><input type="checkbox" id="respectNoindex"> Do not follow links from noindex pages</label>
+                        <label class="checkbox-label"><input type="checkbox" id="respectNofollow"> Do not follow links from nofollow pages</label>
+                        <label class="checkbox-label"><input type="checkbox" id="respectCanonical"> Follow canonical URLs</label>
+                        <label class="checkbox-label"><input type="checkbox" id="respectNextPrev"> Follow rel next/prev URLs</label>
+                    </div>
                 </div>
 
                 <!-- Request Settings -->
@@ -565,7 +796,7 @@
 
                     <div class="setting-group">
                         <label for="userAgent">User Agent</label>
-                        <input type="text" id="userAgent" value="LibreCrawl/1.0 (Web Crawler)">
+                        <input type="text" id="userAgent" value="Deep Crawling/1.0 (Web Crawler)">
                         <span class="setting-help">User agent string sent with requests</span>
                     </div>
 
@@ -621,7 +852,7 @@
 
                     <div class="setting-group">
                         <label for="googleApiKey">Google PageSpeed API Key</label>
-                        <input type="password" id="googleApiKey" placeholder="Enter your Google PageSpeed Insights API key">
+                            <input form="credentialForm" type="password" id="googleApiKey" placeholder="Enter your Google PageSpeed Insights API key">
                         <span class="setting-help">
                             API key for higher rate limits (25k requests/day vs limited without key).
                             <a href="https://developers.google.com/speed/docs/insights/v5/get-started" target="_blank" style="color: #8b5cf6;">Get API key here</a>
@@ -683,6 +914,10 @@
                 <!-- Export Settings -->
                 <div id="export-settings" class="settings-tab-content">
                     <h3>Export Configuration</h3>
+                    <div class="setting-group">
+                        <button class="btn btn-primary" type="button" onclick="exportAiRemediationReport()">Export AI Remediation Report (.md)</button>
+                        <span class="setting-help">Genera un report Markdown pronto da consegnare al proprietario del sito o a un assistente AI.</span>
+                    </div>
 
                     <div class="setting-group">
                         <label for="exportFormat">Default Export Format</label>
@@ -783,6 +1018,35 @@
                                 Robots Meta
                             </label>
                             <label class="checkbox-label">
+                                <input type="checkbox" name="exportFields" value="pdf_pages">
+                                PDF Pages
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="exportFields" value="amp_url">
+                                AMP URL
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="exportFields" value="pagination">
+                                Pagination rel next/prev
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="exportFields" value="http_headers">
+                                HTTP Headers
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="exportFields" value="security">
+                                Security / HSTS
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="exportFields" value="content_analysis">
+                                Content Analysis
+                            </label>
+                            <label class="checkbox-label"><input type="checkbox" name="exportFields" value="resources"> Resources</label>
+                            <label class="checkbox-label"><input type="checkbox" name="exportFields" value="accessibility"> Accessibility</label>
+                            <label class="checkbox-label"><input type="checkbox" name="exportFields" value="html_validation"> HTML Validation</label>
+                            <label class="checkbox-label"><input type="checkbox" name="exportFields" value="custom_search"> Custom Search Results</label>
+                            <label class="checkbox-label"><input type="checkbox" name="exportFields" value="media_metadata"> Media Metadata</label>
+                            <label class="checkbox-label">
                                 <input type="checkbox" name="exportFields" value="issues_detected">
                                 Issues Detected (separate export)
                             </label>
@@ -834,7 +1098,7 @@
 
                     <div class="setting-group" id="jsUserAgentGroup" style="display: none;">
                         <label for="jsUserAgent">JavaScript User Agent</label>
-                        <input type="text" id="jsUserAgent" value="LibreCrawl/1.0 (Web Crawler with JavaScript)">
+                        <input type="text" id="jsUserAgent" value="Deep Crawling/1.0 (Web Crawler with JavaScript)">
                         <span class="setting-help">User agent string for JavaScript-rendered pages</span>
                     </div>
 
@@ -897,7 +1161,7 @@
                 <!-- Custom CSS Settings -->
                 <div id="customcss-settings" class="settings-tab-content">
                     <h3>Custom CSS Styling</h3>
-                    <p class="setting-help">Write custom CSS to personalize the look and feel of the LibreCrawl interface. Changes apply immediately after saving.</p>
+                    <p class="setting-help">Write custom CSS to personalize the look and feel of the Deep Crawling interface. Changes apply immediately after saving.</p>
 
                     <div class="setting-group">
                         <label for="customCSS">Custom CSS Code</label>
@@ -941,6 +1205,85 @@
                     <h3>Advanced Configuration</h3>
 
                     <div class="setting-group">
+                        <label for="customExtractions">Custom Extractions (JSON)</label>
+                        <textarea id="customExtractions" rows="7" placeholder='[{"name":"price","type":"css","query":".price","multiple":false}]'></textarea>
+                        <span class="setting-help">Use type css, xpath, or regex. Optional attribute and multiple fields are supported.</span>
+                        <label for="customSearches">Custom Search (JSON)</label>
+                        <textarea id="customSearches" rows="5" placeholder='[{"name":"cookie-banner","type":"text","query":"Accept cookies"},{"name":"phone","type":"regex","query":"\\+?[0-9][0-9 -]{7,}"}]'></textarea>
+                        <span class="setting-help">Search rendered/source HTML with text or regular expressions.</span>
+                        <label for="contentAreaSelector">Content Area CSS Selector</label>
+                        <input id="contentAreaSelector" class="url-input" placeholder="article .main-content">
+                        <span class="setting-help">Optional selector used for word count, readability and n-grams.</span>
+                    </div>
+
+                    <div class="setting-group">
+                        <label for="maxRedirects">Maximum Redirect Hops</label>
+                        <input type="number" id="maxRedirects" value="10" min="0" max="100">
+                    </div>
+                    <div class="setting-group">
+                        <label for="maxUrlLength">Maximum URL Length</label>
+                        <input type="number" id="maxUrlLength" value="2048" min="0" max="10000">
+                    </div>
+                    <div class="setting-group">
+                        <label for="maxQueryStrings">Maximum Query Parameters</label>
+                        <input type="number" id="maxQueryStrings" value="20" min="0" max="100">
+                    </div>
+                    <div class="setting-group">
+                        <label for="maxUrlsPerDepth">Maximum URLs per Crawl Depth (0 = unlimited)</label>
+                        <input type="number" id="maxUrlsPerDepth" value="0" min="0">
+                        <label for="maxUrlsPerSubdomain">Maximum URLs per Subdomain (0 = unlimited)</label>
+                        <input type="number" id="maxUrlsPerSubdomain" value="0" min="0">
+                    </div>
+
+                    <div class="setting-group">
+                        <h4>Spider parity controls</h4>
+                        <label class="checkbox-label"><input type="checkbox" id="ignoreNonIndexableDuplicates"> Ignore non-indexable duplicates</label>
+                        <label class="checkbox-label"><input type="checkbox" id="ignorePaginatedDuplicates"> Ignore paginated duplicates</label>
+                        <label class="checkbox-label"><input type="checkbox" id="followCanonical"> Crawl canonical targets</label>
+                        <label class="checkbox-label"><input type="checkbox" id="followRedirectChains" checked> Follow redirect chains</label>
+                        <label class="checkbox-label"><input type="checkbox" id="followMetaRefresh" checked> Follow meta refresh redirects</label>
+                        <label class="checkbox-label"><input type="checkbox" id="crawlFragments"> Crawl URL fragments</label>
+                        <label class="checkbox-label"><input type="checkbox" id="retry5xx" checked> Retry 5xx responses</label>
+                        <label for="retry5xxAttempts">5xx retry attempts</label>
+                        <input type="number" id="retry5xxAttempts" value="2" min="0" max="10">
+                        <label for="titleWidthMode">Title/meta width measurement</label>
+                        <select id="titleWidthMode"><option value="pixel">Pixel width</option><option value="character">Character count</option></select>
+                        <label class="checkbox-label"><input type="checkbox" id="enableHtmlValidation" checked> Validate HTML</label>
+                    </div>
+
+                    <div class="setting-group">
+                        <h4>Application updates</h4>
+                        <input id="updateManifestUrl" class="url-input" placeholder="Update manifest URL (optional)">
+                        <button class="btn btn-secondary" type="button" onclick="checkApplicationUpdate()">Check for update</button>
+                        <button class="btn btn-secondary" type="button" onclick="downloadApplicationUpdate()">Download verified update</button>
+                        <button class="btn btn-secondary" type="button" onclick="applyApplicationUpdate()">Apply downloaded update</button>
+                        <button class="btn btn-secondary" type="button" onclick="rollbackApplicationUpdate()">Rollback last update</button>
+                        <pre id="applicationUpdateResult" style="white-space:pre-wrap;"></pre>
+                        <span class="setting-help">Updates are checksum-verified and require explicit confirmation before applying.</span>
+                    </div>
+
+                    <div class="setting-group" id="jsScreenshotGroup" style="display: none;">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="jsScreenshots">
+                            Save rendered page screenshots
+                        </label>
+                        <label for="jsScreenshotDir">Screenshot directory</label>
+                        <input type="text" id="jsScreenshotDir" value="data/screenshots">
+                        <span class="setting-help">Screenshots are saved as PNG files named by URL hash.</span>
+                    </div>
+                    <div class="setting-group" id="jsAdvancedRenderGroup" style="display: none;">
+                        <label class="checkbox-label"><input type="checkbox" id="jsArchive"> Archive rendered HTML</label>
+                        <input type="text" id="jsArchiveDir" value="data/rendered" placeholder="Archive directory">
+                        <label class="checkbox-label"><input type="checkbox" id="jsFlattenShadowDom"> Flatten Shadow DOM</label>
+                        <label class="checkbox-label"><input type="checkbox" id="jsFlattenIframes"> Flatten same-origin iframes</label>
+                        <label for="jsCustomScript">Custom JavaScript</label>
+                        <textarea id="jsCustomScript" rows="4" placeholder="document.body.dataset.crawled = 'true';"></textarea>
+                        <label for="jsInteractions">Browser interactions (JSON)</label>
+                        <textarea id="jsInteractions" rows="5" placeholder='[{"action":"click","selector":"button.load"},{"action":"wait","milliseconds":500},{"action":"type","selector":"input[name=q]","value":"SEO"}]'></textarea>
+                        <span class="setting-help">Supported actions: click, type, wait. Executed before HTML extraction.</span>
+                    </div>
+
+                    <div class="setting-group">
                         <label for="concurrency">Concurrent Requests</label>
                         <input type="number" id="concurrency" value="5" min="1" max="50">
                         <span class="setting-help">Number of simultaneous requests (higher = faster but more resource intensive)</span>
@@ -982,7 +1325,36 @@
                     <div class="setting-group" id="proxySettings" style="display: none;">
                         <label for="proxyUrl">Proxy URL</label>
                         <input type="text" id="proxyUrl" placeholder="http://proxy.example.com:8080">
+                        <label for="proxyUsername">Proxy Username</label>
+                        <input type="text" id="proxyUsername" autocomplete="off">
+                        <label for="proxyPassword">Proxy Password</label>
+                        <input form="credentialForm" type="password" id="proxyPassword" autocomplete="new-password">
+                        <label for="proxyNoProxy">No Proxy Hosts</label>
+                        <input type="text" id="proxyNoProxy" placeholder="localhost,127.0.0.1">
                         <span class="setting-help">Proxy server URL with port</span>
+                    </div>
+                    <div class="setting-group">
+                        <label for="storageMode">Crawl Storage Mode</label>
+                        <select id="storageMode"><option value="full">Full crawl data</option><option value="summary">Summary only</option></select>
+                        <label for="crawlRetentionDays">Crawl Retention (days)</label>
+                        <input type="number" id="crawlRetentionDays" min="0" max="3650" value="90">
+                        <label class="checkbox-label"><input type="checkbox" id="trustedCertificates" checked> Verify trusted TLS certificates</label>
+                        <span class="setting-help">Retention is applied only by an explicit cleanup operation; no crawl is deleted automatically by saving settings.</span>
+                    </div>
+                    <div class="setting-group">
+                        <label for="authUsername">HTTP Basic Auth Username</label>
+                        <input type="text" id="authUsername" autocomplete="off">
+                        <label for="authPassword">HTTP Basic Auth Password</label>
+                        <input form="credentialForm" type="password" id="authPassword" autocomplete="new-password">
+                        <span class="setting-help">Used only by the crawler request session; never included in reports.</span>
+                    </div>
+                    <div class="setting-group">
+                        <label for="authBearerToken">Bearer Token</label>
+                        <input form="credentialForm" type="password" id="authBearerToken" autocomplete="new-password" placeholder="token or Bearer token">
+                        <label for="cookieHeader">Cookie Header</label>
+                        <input form="credentialForm" type="password" id="cookieHeader" autocomplete="new-password" placeholder="session=...; consent=...">
+                        <label class="checkbox-label"><input type="checkbox" id="cookieStorage"> Persist crawl cookie jar locally</label>
+                        <span class="setting-help">Authentication headers are sent only during crawling and are never persisted in URL results.</span>
                     </div>
 
                     <div class="setting-group">

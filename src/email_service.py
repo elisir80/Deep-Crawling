@@ -6,6 +6,7 @@ import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional, Tuple
+from email.mime.application import MIMEApplication
 
 # Load environment variables
 def get_env(key: str, default: str = '') -> str:
@@ -18,7 +19,7 @@ SMTP_PORT = int(get_env('SMTP_PORT', '587'))
 SMTP_USER = get_env('SMTP_USER', '')
 SMTP_PASSWORD = get_env('SMTP_PASSWORD', '')
 SMTP_FROM = get_env('SMTP_FROM', 'noreply@librecrawl.com')
-SMTP_FROM_NAME = get_env('SMTP_FROM_NAME', 'LibreCrawl')
+SMTP_FROM_NAME = get_env('SMTP_FROM_NAME', 'Deep Crawling')
 
 # App URLs
 MAIN_APP_URL = get_env('MAIN_APP_URL', 'https://crawl.librecrawl.com')
@@ -195,6 +196,28 @@ The LibreCrawl Team
     except Exception as e:
         print(f"Error sending email: {e}")
         return False, f"Failed to send email: {str(e)}"
+
+
+def send_report_email(to_email: str, subject: str, report_text: str, attachment_name: str = 'crawl-report.json') -> Tuple[bool, str]:
+    """Send a crawl report with an optional JSON/CSV attachment."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        return False, 'Email service not configured'
+    try:
+        message = MIMEMultipart()
+        message['Subject'] = subject
+        message['From'] = f'{SMTP_FROM_NAME} <{SMTP_FROM}>'
+        message['To'] = to_email
+        message.attach(MIMEText('Deep Crawling crawl report attached.', 'plain', 'utf-8'))
+        attachment = MIMEApplication(report_text.encode('utf-8'), Name=attachment_name)
+        attachment['Content-Disposition'] = f'attachment; filename="{attachment_name}"'
+        message.attach(attachment)
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(message)
+        return True, 'Report email sent successfully'
+    except Exception as error:
+        return False, f'Failed to send report email: {error}'
 
 def send_welcome_email(to_email: str, username: str, app_source: str = 'main') -> Tuple[bool, str]:
     """

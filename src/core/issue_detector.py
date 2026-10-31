@@ -1,5 +1,6 @@
 """SEO issue detection and reporting"""
 import threading
+import hashlib
 from fnmatch import fnmatch
 from urllib.parse import urlparse
 from difflib import SequenceMatcher
@@ -35,6 +36,8 @@ class IssueDetector:
         self._check_performance_issues(result, issues)
         self._check_indexability_issues(result, issues)
         self._check_broken_image_issues(result, issues)
+        self._check_accessibility_audit(result, issues)
+        self._check_security_and_validation(result, issues)
 
         # Add all detected issues
         with self.issues_lock:
@@ -182,6 +185,16 @@ class IssueDetector:
                 'category': 'Technical',
                 'issue': f'{status_code} Redirect',
                 'details': 'URL redirects to another location'
+            })
+
+        redirect_hops = result.get('redirect_hops', 0)
+        if redirect_hops >= 3:
+            issues.append({
+                'url': url,
+                'type': 'warning',
+                'category': 'Technical',
+                'issue': 'Redirect Chain',
+                'details': f'URL required {redirect_hops} redirects before reaching the final destination'
             })
 
         # Canonical URL checks
@@ -363,6 +376,30 @@ class IssueDetector:
                     'details': f'Image returned {status}: {img_url}'
                 })
 
+    def _check_accessibility_audit(self, result, issues):
+        """Convert structured accessibility findings into crawl issues."""
+        url = result.get('url', '')
+        for finding in result.get('accessibility', {}).get('findings', []):
+            severity = finding.get('severity', 'warning')
+            issues.append({
+                'url': url,
+                'type': 'error' if severity == 'error' else 'warning',
+                'category': 'Accessibility',
+                'issue': finding.get('rule', 'Accessibility issue'),
+                'details': f"Found {finding.get('count', 1)} occurrence(s)"
+            })
+
+    def _check_security_and_validation(self, result, issues):
+        url = result.get('url', '')
+        security = result.get('security', {})
+        if security.get('https') and not security.get('hsts'):
+            issues.append({'url': url, 'type': 'warning', 'category': 'Security',
+                           'issue': 'HSTS Header Missing',
+                           'details': 'HTTPS page does not send Strict-Transport-Security'})
+        for error in result.get('html_validation', {}).get('errors', []):
+            issues.append({'url': url, 'type': 'warning', 'category': 'Validation',
+                           'issue': error.get('rule', 'HTML validation error'),
+                           'details': error.get('message', '')})
     def detect_duplication_issues(self, all_results, similarity_threshold=0.85):
         """
         Detect content duplication across all crawled pages.
@@ -372,58 +409,30 @@ class IssueDetector:
             similarity_threshold: Minimum similarity ratio to flag as duplicate (0.0-1.0)
         """
         issues = []
-        processed_pairs = set()
+        # build_duplicate_groups already computes the candidate relationships.
+        # Reusing them avoids a second O(n²) pass on large crawls.
+        groups = self.build_duplicate_groups(all_results, similarity_threshold)
+        if groups:
+            for group in groups:
+                urls = group['urls']
+                for url in urls:
+                    others = [candidate for candidate in urls if candidate != url]
+                    if others:
+                        issues.append({
+                            'url': url,
+                            'type': 'warning',
+                            'category': 'Duplication',
+                            'issue': 'Duplicate Content Detected',
+                            'details': f"Content is duplicated with {others[0]}"
+                        })
+            with self.issues_lock:
+                self.detected_issues.extend(issues)
+            return
 
-        # Compare each result with all others
-        for i, result1 in enumerate(all_results):
-            url1 = result1.get('url', '')
-
-            # Skip if URL should be excluded
-            if self._should_exclude(url1):
-                continue
-
-            for j, result2 in enumerate(all_results):
-                # Skip same URL or already processed pairs
-                if i >= j:
-                    continue
-
-                url2 = result2.get('url', '')
-
-                # Skip if URL should be excluded
-                if self._should_exclude(url2):
-                    continue
-
-                # Create unique pair identifier
-                pair_key = tuple(sorted([url1, url2]))
-                if pair_key in processed_pairs:
-                    continue
-
-                processed_pairs.add(pair_key)
-
-                # Calculate similarity
-                similarity = self._calculate_content_similarity(result1, result2)
-
-                # Flag as duplicate if above threshold
-                if similarity >= similarity_threshold:
-                    # Add issue for both URLs
-                    issues.append({
-                        'url': url1,
-                        'type': 'warning',
-                        'category': 'Duplication',
-                        'issue': 'Duplicate Content Detected',
-                        'details': f'Content is {similarity*100:.1f}% similar to {url2}'
-                    })
-                    issues.append({
-                        'url': url2,
-                        'type': 'warning',
-                        'category': 'Duplication',
-                        'issue': 'Duplicate Content Detected',
-                        'details': f'Content is {similarity*100:.1f}% similar to {url1}'
-                    })
-
-        # Add all detected duplication issues
-        with self.issues_lock:
-            self.detected_issues.extend(issues)
+        # No groups means there is nothing to report. The old pairwise fallback
+        # is intentionally omitted: build_duplicate_groups is the single source
+        # of truth and is bounded for large crawls below.
+        return
 
     def _calculate_content_similarity(self, result1, result2):
         """
@@ -474,6 +483,124 @@ class IssueDetector:
         )
 
         return overall_similarity
+
+    def build_duplicate_groups(self, all_results, similarity_threshold=0.85):
+        """Annotate results with stable fingerprints and duplicate groups."""
+        if not all_results:
+            return []
+        parent = list(range(len(all_results)))
+
+        def find(value):
+            while parent[value] != value:
+                parent[value] = parent[parent[value]]
+                value = parent[value]
+            return value
+
+        def union(left, right):
+            left, right = find(left), find(right)
+            if left != right:
+                parent[right] = left
+
+        for index, result in enumerate(all_results):
+            normalized = ' '.join(
+                ' '.join(str(result.get(field, '')).lower().split())
+                for field in ('title', 'meta_description', 'h1')
+            )
+            normalized += '|' + str(result.get('word_count', 0))
+            result['content_fingerprint'] = hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+            result['duplicate_md5'] = hashlib.md5(normalized.encode('utf-8')).hexdigest()
+            bits = [0] * 64
+            for token in normalized.split():
+                value = int(hashlib.md5(token.encode('utf-8')).hexdigest()[:16], 16)
+                for bit in range(64): bits[bit] += 1 if value & (1 << bit) else -1
+            result['duplicate_simhash'] = format(sum((1 << bit) for bit, score in enumerate(bits) if score >= 0), '016x')
+            result['duplicate_group'] = None
+            result['duplicate_similarity'] = 1.0
+
+        # For large crawls, compare only likely candidates. The previous full
+        # matrix was O(n²) and made finalization effectively hang at a few
+        # thousand URLs. Exact fingerprints are always candidates; near
+        # duplicates are narrowed by simhash buckets and word-count bands.
+        candidate_pairs = None
+        if len(all_results) > 1000:
+            buckets = {}
+            exact_buckets = {}
+            for index, result in enumerate(all_results):
+                if self._should_exclude(result.get('url', '')):
+                    continue
+                simhash = result.get('duplicate_simhash', '')
+                normalized = ' '.join(
+                    ' '.join(str(result.get(field, '')).lower().split())
+                    for field in ('title', 'meta_description', 'h1')
+                )
+                key = (normalized, result.get('word_count', 0))
+                buckets.setdefault(key, []).append(index)
+                exact_buckets.setdefault(key, []).append(index)
+                # Adjacent simhash bands catch near duplicates without a full
+                # matrix; exact metadata remains covered by the key above.
+                if simhash:
+                    for band in (simhash[:4], simhash[4:8]):
+                        buckets.setdefault(('simhash', band), []).append(index)
+            candidate_pairs = set()
+            for bucket_key, indices in buckets.items():
+                # Exact metadata buckets are safe to process in full; only
+                # broad simhash buckets need a guard against template-heavy
+                # sites producing an enormous candidate matrix.
+                if isinstance(bucket_key, tuple) and bucket_key and bucket_key[0] == 'simhash' and len(indices) > 300:
+                    indices = indices[:300]
+                for offset, left in enumerate(indices):
+                    for right in indices[offset + 1:]:
+                        if left != right:
+                            candidate_pairs.add((min(left, right), max(left, right)))
+
+            # Exact matches do not need pairwise similarity calculations.
+            # Union them directly, then remove those pairs from the candidate
+            # matrix; this is linear for common CMS/template duplicates.
+            for indices in exact_buckets.values():
+                if len(indices) > 1:
+                    anchor = indices[0]
+                    for duplicate in indices[1:]:
+                        union(anchor, duplicate)
+                    exact_set = set(indices)
+                    candidate_pairs = {
+                        pair for pair in candidate_pairs
+                        if not (pair[0] in exact_set and pair[1] in exact_set)
+                    }
+
+        for left in range(len(all_results)):
+            if self._should_exclude(all_results[left].get('url', '')):
+                continue
+            rights = (right for right in range(left + 1, len(all_results))
+                      if candidate_pairs is None or (left, right) in candidate_pairs)
+            for right in rights:
+                if self._should_exclude(all_results[right].get('url', '')):
+                    continue
+                similarity = self._calculate_content_similarity(all_results[left], all_results[right])
+                if similarity >= similarity_threshold:
+                    union(left, right)
+                    all_results[left]['duplicate_similarity'] = min(all_results[left]['duplicate_similarity'], similarity)
+                    all_results[right]['duplicate_similarity'] = min(all_results[right]['duplicate_similarity'], similarity)
+
+        root_groups = {}
+        for index in range(len(all_results)):
+            root_groups.setdefault(find(index), []).append(index)
+
+        grouped = {}
+        for members in root_groups.values():
+            if len(members) <= 1:
+                continue
+            group_id = hashlib.sha1(
+                '|'.join(sorted(all_results[i].get('url', '') for i in members)).encode('utf-8')
+            ).hexdigest()[:16]
+            grouped[group_id] = members
+            for index in members:
+                all_results[index]['duplicate_group'] = group_id
+
+        return [
+            {'group_id': group_id, 'urls': [all_results[i].get('url') for i in members],
+             'size': len(members), 'representative': min(all_results[i].get('url', '') for i in members)}
+            for group_id, members in grouped.items()
+        ]
 
     def _text_similarity(self, text1, text2):
         """Calculate similarity ratio between two text strings using SequenceMatcher"""

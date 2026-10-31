@@ -2,6 +2,109 @@
 // Dashboard Functions
 // ========================================
 
+function enterpriseJson(id, fallback) {
+    const value = document.getElementById(id)?.value?.trim();
+    if (!value) return fallback;
+    try { return JSON.parse(value); } catch (error) {
+        throw new Error(`${id}: JSON non valido`);
+    }
+}
+
+async function runEnterpriseResearch(tool, payload) {
+    const output = document.getElementById('enterpriseResults');
+    try {
+        output.textContent = 'Loading...';
+        const response = await fetch(`/api/seo/research/${encodeURIComponent(tool)}`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload || {})
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+        output.textContent = JSON.stringify(data, null, 2);
+        return data;
+    } catch (error) {
+        output.textContent = `Errore: ${error.message}`;
+        return null;
+    }
+}
+
+async function runEnterpriseDashboard() {
+    try {
+        return runEnterpriseResearch('dashboard', {
+            projects: enterpriseJson('enterpriseProjects', []),
+            bot_logs: enterpriseJson('enterpriseBotLogs', []),
+            data_rows: enterpriseJson('enterpriseProjects', [])
+        });
+    } catch (error) {
+        document.getElementById('enterpriseResults').textContent = `Errore: ${error.message}`;
+    }
+}
+
+async function runEnterpriseCapabilities() {
+    return runEnterpriseResearch('capabilities', {});
+}
+
+async function runEnterpriseHistory() {
+    try {
+        return runEnterpriseResearch('page-history', {
+            snapshots: enterpriseJson('enterpriseSnapshots', [])
+        });
+    } catch (error) {
+        document.getElementById('enterpriseResults').textContent = `Errore: ${error.message}`;
+    }
+}
+
+async function runEnterprisePatches() {
+    try {
+        return runEnterpriseResearch('patch-automation', {
+            issues: enterpriseJson('enterpriseIssues', []), approved: false
+        });
+    } catch (error) {
+        document.getElementById('enterpriseResults').textContent = `Errore: ${error.message}`;
+    }
+}
+
+async function applyEnterprisePatchesLocally() {
+    try {
+        const issues = enterpriseJson('enterpriseIssues', []);
+        const preview = await runEnterpriseResearch('patch-automation', {issues, approved: true});
+        if (!preview) return;
+        return runEnterpriseResearch('patch-apply', {rows: issues, plans: preview.plans || preview.data?.plans || [], approved: true});
+    } catch (error) {
+        document.getElementById('enterpriseResults').textContent = `Errore: ${error.message}`;
+    }
+}
+
+async function runEnterpriseReportTask() {
+    return runEnterpriseResearch('report-task', {
+        async: true,
+        data: {projects: enterpriseJson('enterpriseProjects', []), generated_at: new Date().toISOString()}
+    });
+}
+
+async function runEnterpriseAiVisibility() {
+    try {
+        return runEnterpriseResearch('ai-visibility', {
+            target_domain: document.getElementById('enterpriseAiDomain').value.trim(),
+            prompts: enterpriseJson('enterpriseAiPrompts', [])
+        });
+    } catch (error) {
+        document.getElementById('enterpriseResults').textContent = `Errore: ${error.message}`;
+    }
+}
+
+async function runEnterpriseNextTool() {
+    const output=document.getElementById('enterpriseNextResults');
+    try {
+        const raw=document.getElementById('enterpriseNextPayload').value.trim();
+        const payload=raw ? JSON.parse(raw) : {};
+        const tool=document.getElementById('enterpriseNextTool').value;
+        const response=await fetch(`/api/enterprise-next/${encodeURIComponent(tool)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        const data=await response.json();
+        if(!response.ok||data.error) throw new Error(data.error||`HTTP ${response.status}`);
+        output.textContent=JSON.stringify(data,null,2);
+    } catch(error) { output.textContent=`Errore: ${error.message}`; }
+}
+
 async function openDashboard() {
     const modal = document.getElementById('dashboardModal');
     const content = document.getElementById('dashboardContent');

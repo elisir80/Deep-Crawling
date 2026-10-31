@@ -9,7 +9,7 @@ let defaultSettings = {
     crawlExternalLinks: false,
 
     // Request settings
-    userAgent: 'LibreCrawl/1.0 (Web Crawler)',
+    userAgent: 'Deep Crawling/1.0 (Web Crawler)',
     timeout: 10,
     retries: 3,
     acceptLanguage: 'en-US,en;q=0.9',
@@ -25,6 +25,11 @@ let defaultSettings = {
     includePatterns: '',
     excludePatterns: '',
     maxFileSize: 50,
+    maxRedirects: 10,
+    maxUrlLength: 2048,
+    maxQueryStrings: 20,
+    maxFolderDepth: 20,
+    maxLinksPerUrl: 0,
 
     // Duplication detection settings
     enableDuplicationCheck: true,
@@ -41,7 +46,30 @@ let defaultSettings = {
     saveSession: false,
     enableProxy: false,
     proxyUrl: '',
+    proxyUsername: '',
+    proxyPassword: '',
+    proxyNoProxy: '',
+    trustedCertificates: true,
+    storageMode: 'full',
+    crawlRetentionDays: 90,
     customHeaders: '',
+    authUsername: '',
+    authPassword: '',
+    authBearerToken: '',
+    cookieHeader: '',
+    cookieStorage: false,
+    jsInteractions: '',
+    customSearches: [],
+    contentAreaSelector: '',
+    maxUrlsPerDepth: 0,
+    maxUrlsPerSubdomain: 0,
+    crawlAllSubdomains: false,
+    crawlOutsideStartFolder: true,
+    respectHsts: false,
+    respectNoindex: false,
+    respectNofollow: false,
+    respectCanonical: false,
+    respectNextPrev: false,
 
     // JavaScript rendering settings
     enableJavaScript: false,
@@ -49,13 +77,21 @@ let defaultSettings = {
     jsTimeout: 30,
     jsBrowser: 'chromium',
     jsHeadless: true,
-    jsUserAgent: 'LibreCrawl/1.0 (Web Crawler with JavaScript)',
+    jsUserAgent: 'Deep Crawling/1.0 (Web Crawler with JavaScript)',
     jsViewportWidth: 1920,
     jsViewportHeight: 1080,
     jsMaxConcurrentPages: 3,
+    jsScreenshots: false,
+    jsScreenshotDir: 'data/screenshots',
+    jsArchive: false,
+    jsArchiveDir: 'data/rendered',
+    jsFlattenShadowDom: false,
+    jsFlattenIframes: false,
+    jsCustomScript: '',
 
     // Custom CSS styling
     customCSS: '',
+    customExtractions: [],
 
     // Issue exclusion patterns
     issueExclusionPatterns: `# WordPress admin & system paths
@@ -418,6 +454,8 @@ function populateSettingsForm() {
         if (element) {
             if (element.type === 'checkbox') {
                 element.checked = currentSettings[key];
+            } else if (key === 'customExtractions') {
+                element.value = JSON.stringify(currentSettings[key] || [], null, 2);
             } else {
                 element.value = currentSettings[key];
             }
@@ -442,6 +480,7 @@ function populateSettingsForm() {
     const jsSettingsGroups = [
         'jsSettings', 'jsTimeoutGroup', 'jsBrowserGroup', 'jsHeadlessGroup',
         'jsUserAgentGroup', 'jsViewportGroup', 'jsConcurrencyGroup', 'jsWarning'
+        , 'jsScreenshotGroup', 'jsAdvancedRenderGroup'
     ];
 
     jsSettingsGroups.forEach(groupId => {
@@ -459,12 +498,15 @@ function collectSettingsFromForm() {
     const formFields = [
         'maxDepth', 'maxUrls', 'crawlDelay', 'followRedirects', 'crawlExternalLinks',
         'userAgent', 'timeout', 'retries', 'acceptLanguage', 'respectRobotsTxt', 'allowCookies', 'discoverSitemaps', 'enablePageSpeed', 'googleApiKey',
-        'includeExtensions', 'excludeExtensions', 'includePatterns', 'excludePatterns', 'maxFileSize',
+        'includeExtensions', 'excludeExtensions', 'includePatterns', 'excludePatterns', 'maxFileSize', 'maxRedirects', 'maxUrlLength', 'maxQueryStrings', 'maxFolderDepth', 'maxLinksPerUrl', 'maxUrlsPerDepth', 'maxUrlsPerSubdomain',
         'enableDuplicationCheck', 'duplicationThreshold',
         'exportFormat', 'concurrency', 'memoryLimit', 'logLevel', 'saveSession',
-        'enableProxy', 'proxyUrl', 'customHeaders',
-        'enableJavaScript', 'jsWaitTime', 'jsTimeout', 'jsBrowser', 'jsHeadless', 'jsUserAgent', 'jsViewportWidth', 'jsViewportHeight', 'jsMaxConcurrentPages',
-        'customCSS', 'issueExclusionPatterns'
+        'enableProxy', 'proxyUrl', 'proxyUsername', 'proxyPassword', 'proxyNoProxy', 'trustedCertificates', 'storageMode', 'crawlRetentionDays', 'customHeaders', 'authUsername', 'authPassword', 'authBearerToken', 'cookieHeader', 'cookieStorage', 'jsInteractions', 'customSearches', 'contentAreaSelector', 'crawlAllSubdomains', 'crawlOutsideStartFolder', 'respectHsts', 'respectNoindex', 'respectNofollow', 'respectCanonical', 'respectNextPrev',
+        'enableJavaScript', 'jsWaitTime', 'jsTimeout', 'jsBrowser', 'jsHeadless', 'jsUserAgent', 'jsViewportWidth', 'jsViewportHeight', 'jsMaxConcurrentPages', 'jsScreenshots', 'jsScreenshotDir', 'jsArchive', 'jsArchiveDir', 'jsFlattenShadowDom', 'jsFlattenIframes', 'jsCustomScript',
+        'customCSS', 'customExtractions', 'issueExclusionPatterns',
+        'ignoreNonIndexableDuplicates', 'ignorePaginatedDuplicates', 'followCanonical',
+        'followRedirectChains', 'followMetaRefresh', 'crawlFragments', 'retry5xx',
+        'retry5xxAttempts', 'titleWidthMode', 'enableHtmlValidation'
     ];
 
     formFields.forEach(fieldId => {
@@ -474,6 +516,14 @@ function collectSettingsFromForm() {
                 settings[fieldId] = element.checked;
             } else if (element.type === 'number') {
                 settings[fieldId] = parseFloat(element.value) || 0;
+            } else if (fieldId === 'customExtractions' || fieldId === 'customSearches') {
+                try {
+                    settings[fieldId] = element.value.trim() ? JSON.parse(element.value) : [];
+                    if (!Array.isArray(settings[fieldId])) throw new Error('must be an array');
+                } catch (error) {
+                    settings[fieldId] = [];
+                    alert(`${fieldId} must be valid JSON array`);
+                }
             } else {
                 settings[fieldId] = element.value;
             }

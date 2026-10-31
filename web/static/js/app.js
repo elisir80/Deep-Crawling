@@ -27,6 +27,9 @@ let crawlState = {
 
 // Incremental polling instance
 let incrementalPoller = null;
+const LARGE_CRAWL_THRESHOLD = 5000;
+const LARGE_CRAWL_CLIENT_LIMIT = 2500;
+let largeCrawlMode = false;
 
 // Virtual Scrollers
 let virtualScrollers = {
@@ -199,6 +202,8 @@ function toggleCrawl() {
 function startCrawl() {
     const urlInput = document.getElementById('urlInput');
     let url = urlInput.value.trim();
+    const crawlMode = document.getElementById('crawlMode')?.value || 'spider';
+    const seedText = document.getElementById('seedUrls')?.value.trim() || '';
 
     if (!url) {
         alert('Please enter a URL to crawl');
@@ -239,7 +244,25 @@ function startCrawl() {
     resetStats();
 
     // Start the actual crawling via Python backend
-    startPythonCrawl(url);
+    const seedUrls = crawlMode === 'spider'
+        ? undefined
+        : seedText.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+    if (crawlMode !== 'spider' && !seedUrls.length) {
+        alert('Enter at least one seed URL');
+        crawlState.isRunning = false;
+        updateCrawlButtons();
+        return;
+    }
+    startPythonCrawl(url, crawlMode, seedUrls);
+}
+
+function updateCrawlModeHelp() {
+    const mode = document.getElementById('crawlMode')?.value || 'spider';
+    const group = document.getElementById('seedUrlsGroup');
+    const seed = document.getElementById('seedUrls');
+    if (!group || !seed) return;
+    group.style.display = mode === 'spider' ? 'none' : 'block';
+    seed.placeholder = mode === 'sitemap' ? 'https://example.com/sitemap.xml' : 'One URL per line';
 }
 
 function pauseCrawl() {
@@ -279,6 +302,14 @@ function stopCrawl() {
 
     // Stop Python crawler
     stopPythonCrawl();
+}
+
+function finishCrawlUi(message = 'Crawl completed') {
+    crawlState.isRunning = false;
+    crawlState.isPaused = false;
+    updateCrawlButtons();
+    hideProgress();
+    updateStatus(message);
 }
 
 function clearCrawlData() {
@@ -344,14 +375,14 @@ function clearCrawlData() {
     document.getElementById('urlInput').focus();
 }
 
-function startPythonCrawl(url) {
+function startPythonCrawl(url, crawlMode = 'spider', seedUrls) {
     // Call Python backend to start crawling
     fetch('/api/start_crawl', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ url: url })
+        body: JSON.stringify({ url: url, crawl_mode: crawlMode, seed_urls: seedUrls })
     })
     .then(response => response.json())
     .then(data => {
@@ -412,17 +443,18 @@ function pollCrawlProgress() {
             }
 
             if (data.status === 'demo_stopped' || data.demo_stopped) {
-                stopCrawl();
+                finishCrawlUi('Demo limit reached — crawl data saved');
                 updateStatus('Demo limit reached — crawl data saved');
                 showDemoLimitNotification();
                 if (typeof loadVisualizationData === 'function') {
                     loadVisualizationData();
                 }
             } else if (crawlState.isRunning && data.status !== 'completed') {
-                setTimeout(pollCrawlProgress, 1000); // Poll every second
+                setTimeout(pollCrawlProgress, largeCrawlMode ? 2500 : 1000);
             } else if (data.status === 'completed') {
-                stopCrawl();
-                updateStatus('Crawl completed');
+                // A completed crawl must not call /api/stop_crawl: doing so
+                // changes the persisted result from completed to stopped.
+                finishCrawlUi('Crawl completed');
                 // Update visualization one final time when crawl completes
                 if (typeof loadVisualizationData === 'function') {
                     loadVisualizationData();
@@ -442,7 +474,7 @@ function pollCrawlProgress() {
             console.error('Error polling crawl status:', error);
             // Continue polling even if there's an error (common on large crawls)
             if (crawlState.isRunning) {
-                setTimeout(pollCrawlProgress, 1000);
+            setTimeout(pollCrawlProgress, largeCrawlMode ? 2500 : 1000);
             }
         });
 }
@@ -450,6 +482,8 @@ function pollCrawlProgress() {
 function updateCrawlData(data) {
     // Update statistics
     crawlState.stats = data.stats || crawlState.stats;
+    largeCrawlMode = Number(crawlState.stats.discovered || data.urls?.length || 0) >= LARGE_CRAWL_THRESHOLD;
+    document.body.classList.toggle('large-crawl-mode', largeCrawlMode);
     updateStatsDisplay();
 
     // Update memory statistics
@@ -459,15 +493,23 @@ function updateCrawlData(data) {
 
     // Update tables with new URLs
     if (data.urls) {
-        data.urls.forEach(url => {
-            addUrlToTable(url);
-        });
+        if (largeCrawlMode) {
+            // Keep only a bounded viewport cache in the browser. The complete
+            // dataset remains available through the server/database exports.
+            const visibleUrls = data.urls.slice(-LARGE_CRAWL_CLIENT_LIMIT);
+            crawlState.urls = visibleUrls;
+            if (virtualScrollers.overview) virtualScrollers.overview.setData(visibleUrls);
+            if (virtualScrollers.internal) virtualScrollers.internal.setData(visibleUrls.filter(url => url.is_internal));
+            if (virtualScrollers.external) virtualScrollers.external.setData(visibleUrls.filter(url => !url.is_internal));
+        } else {
+            data.urls.forEach(url => addUrlToTable(url));
+        }
     }
 
     // Update links tables only if Links tab is active to improve performance
     if (data.links) {
         // Always store links data in crawlState
-        crawlState.links = data.links;
+        crawlState.links = largeCrawlMode ? data.links.slice(-LARGE_CRAWL_CLIENT_LIMIT) : data.links;
         if (isLinksTabActive()) {
             updateLinksTable(data.links);
         } else {
@@ -479,7 +521,7 @@ function updateCrawlData(data) {
     // Update issues table only if Issues tab is active
     if (data.issues) {
         // Always store issues data in crawlState
-        crawlState.issues = data.issues;
+        crawlState.issues = largeCrawlMode ? data.issues.slice(-LARGE_CRAWL_CLIENT_LIMIT) : data.issues;
         if (isIssuesTabActive()) {
             updateIssuesTable(data.issues);
         } else {
@@ -538,6 +580,16 @@ function updateProgressText(data) {
 
 function updateStatsDisplay() {
     document.getElementById('discoveredCount').textContent = crawlState.stats.discovered;
+    const overview = {
+        overviewDiscovered: crawlState.stats.discovered,
+        overviewCrawled: crawlState.stats.crawled,
+        overviewIssues: crawlState.issues.length,
+        overviewSpeed: Number(crawlState.stats.speed || 0).toFixed(1)
+    };
+    Object.entries(overview).forEach(([id, value]) => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = value;
+    });
     document.getElementById('crawledCount').textContent = crawlState.stats.crawled;
     document.getElementById('crawlDepth').textContent = crawlState.stats.depth;
     document.getElementById('crawlSpeed').textContent = crawlState.stats.speed + ' URLs/sec';
@@ -1042,6 +1094,60 @@ function addRowToTable(tableBodyId, rowData) {
             cell.textContent = cellData;
         }
     });
+}
+
+function spiderDatasetRows() {
+    return window._spiderDatasetRows || [];
+}
+
+async function loadSpiderDataset() {
+    const crawlId = Number(document.getElementById('spiderDatasetCrawlId')?.value);
+    const tab = document.getElementById('spiderDatasetName')?.value;
+    const output = document.getElementById('spiderDatasetTable');
+    if (!crawlId || !tab) { showNotification('Inserisci un crawl ID e un tab', 'warning'); return; }
+    const response = await fetch(`/api/crawls/${crawlId}/tabs/${encodeURIComponent(tab)}`);
+    const data = await response.json();
+    if (!data.success) { showNotification(data.error || 'Dataset non disponibile', 'error'); return; }
+    window._spiderDatasetRows = data.rows || [];
+    const keys = Array.from(new Set(window._spiderDatasetRows.flatMap(row => Object.keys(row)))).slice(0, 18);
+    output.querySelector('thead').innerHTML = `<tr>${keys.map(key => `<th>${escapeHtml(key)}</th>`).join('')}</tr>`;
+    output.querySelector('tbody').innerHTML = window._spiderDatasetRows.map(row => `<tr>${keys.map(key => {
+        const value = row[key];
+        const text = typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '');
+        return `<td title="${escapeHtml(text)}">${escapeHtml(text.slice(0, 500))}</td>`;
+    }).join('')}</tr>`).join('');
+    document.getElementById('spiderDatasetCount').textContent = `${data.count} rows · ${data.tab}`;
+}
+
+function openSpiderDatasetTab(tab) {
+    const select = document.getElementById('spiderDatasetName');
+    if (select) select.value = tab;
+    const overview = document.querySelector('[onclick="switchTab(\'overview\')"]');
+    if (overview) overview.click();
+    loadSpiderDataset();
+}
+
+function exportSpiderDataset() {
+    const rows = spiderDatasetRows();
+    if (!rows.length) { showNotification('Carica prima un dataset', 'warning'); return; }
+    const blob = new Blob([JSON.stringify(rows, null, 2)], {type: 'application/json'});
+    const link = document.createElement('a'); link.href = URL.createObjectURL(blob);
+    link.download = `librecrawl-${document.getElementById('spiderDatasetName').value}.json`;
+    link.click(); URL.revokeObjectURL(link.href);
+}
+
+async function loadCrawlReport() {
+    const crawlId = Number(document.getElementById('reportAnalysisCrawlId')?.value);
+    if (!crawlId) { showNotification('Inserisci un crawl ID', 'warning'); return; }
+    const response = await fetch(`/api/crawls/${crawlId}/report`);
+    const data = await response.json();
+    document.getElementById('analysisDetails').textContent = JSON.stringify(data, null, 2);
+}
+
+function downloadCrawlReport() {
+    const crawlId = Number(document.getElementById('reportAnalysisCrawlId')?.value);
+    if (!crawlId) { showNotification('Inserisci un crawl ID', 'warning'); return; }
+    window.open(`/api/crawls/${crawlId}/report?format=csv`, '_blank');
 }
 
 // Tab Management
@@ -1698,6 +1804,19 @@ function showUrlDetails(url) {
                 </div>
                 <div class="details-content">
                     <div class="details-url">${safeUrl}</div>
+                    <div class="detail-panel-tabs" role="tablist">
+                        <button class="btn btn-secondary" onclick="renderDetailPanel('summary')">Summary</button>
+                        <button class="btn btn-secondary" onclick="renderDetailPanel('inlinks')">Inlinks</button>
+                        <button class="btn btn-secondary" onclick="renderDetailPanel('outlinks')">Outlinks</button>
+                        <button class="btn btn-secondary" onclick="renderDetailPanel('resources')">Resources</button>
+                        <button class="btn btn-secondary" onclick="renderDetailPanel('headers')">HTTP Headers</button>
+                        <button class="btn btn-secondary" onclick="renderDetailPanel('cookies')">Cookies</button>
+                        <button class="btn btn-secondary" onclick="renderDetailPanel('structured_data')">Structured Data</button>
+                        <button class="btn btn-secondary" onclick="renderDetailPanel('rendering')">Rendering</button>
+                        <button class="btn btn-secondary" onclick="renderDetailPanel('accessibility')">Accessibility</button>
+                        <button class="btn btn-secondary" onclick="renderDetailPanel('content')">N-grams</button>
+                    </div>
+                    <div id="detailPanelOutput" class="details-subsection" role="tabpanel"></div>
 
                     <div class="details-sections">
                         <div class="details-section">
@@ -1773,6 +1892,74 @@ function showUrlDetails(url) {
                             </div>
                         </div>
 
+                        <div class="details-section">
+                            <h4>🗂️ Lower Window Panels</h4>
+                            <div class="details-grid">
+                                <div><strong>Inlinks:</strong> ${(urlData.inlinks || urlData.linked_from || []).length || urlData.internal_links || 0}</div>
+                                <div><strong>Outlinks:</strong> ${(urlData.outlinks || []).length || (urlData.internal_links || 0) + (urlData.external_links || 0)}</div>
+                                <div><strong>Resources:</strong> ${(urlData.resources || []).length}</div>
+                                <div><strong>SERP Title:</strong> ${safeTitle}</div>
+                                <div><strong>SERP Description:</strong> ${safeMetaDesc}</div>
+                                <div><strong>N-grams:</strong> ${((urlData.content_analysis || {}).n_grams?.bigrams || []).length + ((urlData.content_analysis || {}).n_grams?.trigrams || []).length}</div>
+                            </div>
+                            ${urlData.outlinks?.length ? `<div class="details-subsection"><h5>Outlinks</h5><pre class="json-preview">${escapeHtml(JSON.stringify(urlData.outlinks.slice(0, 100), null, 2))}</pre></div>` : ''}
+                            ${urlData.inlinks?.length ? `<div class="details-subsection"><h5>Inlinks</h5><pre class="json-preview">${escapeHtml(JSON.stringify(urlData.inlinks.slice(0, 100), null, 2))}</pre></div>` : ''}
+                        </div>
+
+                        <div class="details-section">
+                            <h4>🧪 Advanced Crawl Audit</h4>
+                            <div class="details-grid">
+                                <div><strong>PDF:</strong> ${urlData.pdf_pages != null ? `${urlData.pdf_pages} pages` : 'N/A'}</div>
+                                <div><strong>AMP:</strong> ${urlData.amp_url ? escapeHtml(urlData.amp_url) : 'N/A'}</div>
+                                <div><strong>Mobile Alternate:</strong> ${urlData.mobile_alternate ? escapeHtml(urlData.mobile_alternate) : 'N/A'}</div>
+                                <div><strong>Pagination:</strong> ${urlData.pagination?.next || urlData.pagination?.prev ? 'Detected' : 'N/A'}</div>
+                                <div><strong>Meta Refresh:</strong> ${urlData.meta_refresh ? escapeHtml(JSON.stringify(urlData.meta_refresh)) : 'N/A'}</div>
+                                <div><strong>Headers:</strong> ${Object.keys(urlData.http_headers || {}).length}</div>
+                                <div><strong>Cookies:</strong> ${(urlData.cookies || []).length}</div>
+                                <div><strong>HSTS:</strong> ${urlData.security?.hsts ? '✅ Present' : '⚠️ Missing/N/A'}</div>
+                                <div><strong>HTML Validation:</strong> ${urlData.html_validation?.valid === false ? '❌ Issues' : (urlData.html_validation ? '✅ Valid' : 'N/A')}</div>
+                                <div><strong>JS Errors:</strong> ${(urlData.javascript_errors || []).length}</div>
+                                <div><strong>Resources:</strong> ${(urlData.resources || []).length}</div>
+                                <div><strong>Rendered Screenshot:</strong> ${urlData.screenshot_path ? `<a href="/api/rendered-file?path=${encodeURIComponent(urlData.screenshot_path)}" target="_blank">Open</a>` : 'N/A'}</div>
+                                <div><strong>Rendered Archive:</strong> ${urlData.rendered_archive_path ? `<a href="/api/rendered-file?path=${encodeURIComponent(urlData.rendered_archive_path)}" target="_blank">Open</a>` : 'N/A'}</div>
+                                <div><strong>Network Requests:</strong> ${urlData.render_diagnostics?.network?.length ?? 0}</div>
+                                <div><strong>Blocked Requests:</strong> ${urlData.render_diagnostics?.blocked_requests?.length ?? 0}</div>
+                                <div><strong>Hydration:</strong> ${urlData.render_diagnostics?.hydration_mismatch ? 'Mismatch detected' : 'No mismatch detected'}</div>
+                                <div><strong>Media:</strong> ${urlData.media_type ? escapeHtml(urlData.media_type) : 'N/A'}</div>
+                                <div><strong>SWF:</strong> ${urlData.swf_detected ? '✅ Detected' : 'N/A'}</div>
+                            </div>
+                            ${Object.keys(urlData.http_headers || {}).length ? `<div class="details-subsection"><h5>Response Headers</h5><pre class="json-preview">${escapeHtml(JSON.stringify(urlData.http_headers, null, 2))}</pre></div>` : ''}
+                            ${(urlData.cookies || []).length ? `<div class="details-subsection"><h5>Cookies (names only)</h5><p>${(urlData.cookies || []).map(cookie => escapeHtml(cookie.name || '')).join(', ')}</p></div>` : ''}
+                            ${(urlData.pdf_text || urlData.html_validation?.errors?.length || urlData.javascript_errors?.length) ? `
+                                <pre class="json-preview">${escapeHtml(JSON.stringify({pdf_text: urlData.pdf_text ? String(urlData.pdf_text).slice(0, 2000) : undefined, html_validation: urlData.html_validation, javascript_errors: urlData.javascript_errors}, null, 2))}</pre>
+                            ` : ''}
+                        </div>
+
+                        <div class="details-section">
+                            <h4>✍️ Content Quality</h4>
+                            <div class="details-grid">
+                                <div><strong>Content Area:</strong> ${escapeHtml(urlData.content_analysis?.content_area || 'N/A')}</div>
+                                <div><strong>Readability:</strong> ${urlData.content_analysis?.readability?.flesch_score ?? 'N/A'}</div>
+                                <div><strong>Grammar Findings:</strong> ${(urlData.content_analysis?.grammar || []).length}</div>
+                                <div><strong>Spelling Findings:</strong> ${(urlData.content_analysis?.spelling || []).length}</div>
+                                <div><strong>Repeated Phrases:</strong> ${(urlData.content_analysis?.repeated_phrases || []).length}</div>
+                                <div><strong>Bigrams:</strong> ${(urlData.content_analysis?.n_grams?.bigrams || []).length}</div>
+                                <div><strong>Trigrams:</strong> ${(urlData.content_analysis?.n_grams?.trigrams || []).length}</div>
+                            </div>
+                            ${(urlData.content_analysis?.grammar?.length || urlData.content_analysis?.spelling?.length) ? `<pre class="json-preview">${escapeHtml(JSON.stringify({grammar: urlData.content_analysis.grammar, spelling: urlData.content_analysis.spelling}, null, 2))}</pre>` : ''}
+                        </div>
+
+                        <div class="details-section">
+                            <h4>♿ Accessibility & Validation</h4>
+                            <div class="details-grid">
+                                <div><strong>Accessibility Findings:</strong> ${(urlData.accessibility?.findings || []).length}</div>
+                                <div><strong>Accessibility Score:</strong> ${urlData.accessibility?.score ?? 'N/A'}</div>
+                                <div><strong>HTML Valid:</strong> ${urlData.html_validation ? (urlData.html_validation.valid ? '✅ Yes' : '❌ No') : 'N/A'}</div>
+                                <div><strong>HTML Errors:</strong> ${(urlData.html_validation?.errors || []).length}</div>
+                            </div>
+                            ${(urlData.accessibility?.findings?.length || urlData.html_validation?.errors?.length) ? `<pre class="json-preview">${escapeHtml(JSON.stringify({accessibility: urlData.accessibility, html_validation: urlData.html_validation}, null, 2))}</pre>` : ''}
+                        </div>
+
                         ${(urlData.linked_from && urlData.linked_from.length > 0) ? `
                         <div class="details-section">
                             <h4>🔗 Linked From</h4>
@@ -1812,6 +1999,142 @@ function showUrlDetails(url) {
 
     // Add modal to page
     document.body.insertAdjacentHTML('beforeend', modalContent);
+    window._activeDetailData = urlData;
+    renderDetailPanel('summary');
+}
+
+async function openUserManagement() {
+    let response;
+    try { response = await fetch('/api/admin/users'); } catch (_) { showNotification('User management unavailable', 'error'); return; }
+    const data = await response.json();
+    if (!response.ok || !data.success) { showNotification(data.error || 'Administrator access required', 'error'); return; }
+    const rows = (data.users || []).map(user => `<tr><td>${escapeHtml(user.username)}</td><td>${escapeHtml(user.email)}</td><td>${escapeHtml(user.tier || 'guest')}</td><td>${user.verified ? 'Verified' : 'Pending'}</td></tr>`).join('');
+    const modal = document.createElement('div');
+    modal.className = 'modal'; modal.id = 'userManagementModal'; modal.style.display = 'flex';
+    modal.innerHTML = `<div class="modal-content" style="max-width:900px"><div class="modal-header"><h2>User Management</h2><button class="modal-close" onclick="document.getElementById('userManagementModal').remove()">&times;</button></div><div class="modal-body"><h3>Create user</h3><form id="adminCreateUserForm" class="settings-form"><div class="input-group"><label>Username</label><input name="username" class="url-input" required minlength="3"></div><div class="input-group"><label>Email</label><input name="email" type="email" class="url-input" required></div><div class="input-group"><label>Password</label><input name="password" type="password" class="url-input" required minlength="8"></div><div class="input-group"><label>Role</label><select name="tier" class="url-input"><option value="user">User</option><option value="extra">Extra</option><option value="admin">Administrator</option></select></div><button class="btn btn-primary" type="submit">Create verified user</button></form><h3>Existing users</h3><div class="table-container"><table class="data-table"><thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No users</td></tr>'}</tbody></table></div></div></div>`;
+    document.body.appendChild(modal);
+    document.getElementById('adminCreateUserForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const payload = Object.fromEntries(new FormData(event.target).entries());
+        const result = await fetch('/api/admin/users', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+        const body = await result.json();
+        if (!result.ok || !body.success) { showNotification(body.error || 'User creation failed', 'error'); return; }
+        showNotification('User created and verified', 'success');
+        modal.remove();
+        openUserManagement();
+    });
+}
+
+function markdownCell(value) {
+    return String(value ?? 'N/D').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim() || 'N/D';
+}
+
+function markdownDetails(value) {
+    return String(value ?? 'Nessun dettaglio disponibile').replace(/```/g, '``\\`').trim();
+}
+
+async function exportAiRemediationReport() {
+    try {
+        const response = await fetch('/api/crawl_status');
+        const data = await response.json();
+        const urls = data.urls?.length ? data.urls : (crawlState.urls || []);
+        const issues = data.issues?.length ? data.issues : (crawlState.issues || window.currentIssues || []);
+        if (!urls.length && !issues.length) {
+            showNotification('No crawl data to export', 'error');
+            return;
+        }
+
+        const priority = { error: 'P0 - Critical', warning: 'P1 - High', info: 'P2 - Review' };
+        const counts = issues.reduce((acc, issue) => {
+            const key = issue.type || 'info';
+            acc[key] = (acc[key] || 0) + 1;
+            return acc;
+        }, {});
+        const site = urls[0]?.url ? (() => { try { return new URL(urls[0].url).origin; } catch (_) { return 'Sito analizzato'; } })() : 'Sito analizzato';
+        const grouped = {};
+        issues.forEach(issue => {
+            const key = `${issue.type || 'info'}|${issue.category || 'General'}|${issue.issue || 'Issue'}`;
+            if (!grouped[key]) grouped[key] = { ...issue, urls: [], total: 0 };
+            grouped[key].total += 1;
+            if (issue.url && grouped[key].urls.length < 100) grouped[key].urls.push(issue.url);
+        });
+        const groups = Object.values(grouped).sort((a, b) => {
+            const rank = { error: 0, warning: 1, info: 2 };
+            return (rank[a.type] ?? 2) - (rank[b.type] ?? 2) || b.total - a.total;
+        });
+        const generated = new Date().toISOString();
+        let md = `# SEO Remediation Task\n\n`;
+        md += `> Generated by Deep Crawling on ${generated}\n\n`;
+        md += `## Obiettivo\n\nAnalizza e risolvi le problematiche SEO riportate per **${site}**. Mantieni invariati contenuti e funzionalità valide. Prima di applicare modifiche distruttive, chiedi conferma.\n\n`;
+        md += `## Contesto del crawl\n\n- URL scoperte: ${data.stats?.discovered ?? urls.length}\n- URL analizzate: ${data.stats?.crawled ?? urls.length}\n- Issue totali: ${issues.length}\n- Critiche: ${counts.error || 0}\n- Alte: ${counts.warning || 0}\n- Da verificare: ${counts.info || 0}\n\n`;
+        md += `## Istruzioni per l'assistente AI\n\n1. Raggruppa le modifiche per template e non correggere ripetutamente lo stesso problema.\n2. Verifica il codice sorgente e il contesto di ogni URL prima di modificare il sito.\n3. Proponi prima un piano con file, query o endpoint coinvolti.\n4. Applica le correzioni solo dopo approvazione del proprietario.\n5. Esegui un controllo post-intervento e restituisci URL modificati, esito e problemi residui.\n\n`;
+        md += `## Issue rilevate\n\n`;
+        if (!groups.length) md += `Nessuna issue rilevata nel crawl.\n`;
+        groups.forEach((issue, index) => {
+            md += `### ${index + 1}. [${priority[issue.type] || 'P2 - Review'}] ${markdownCell(issue.issue || 'Issue SEO')}\n\n`;
+            md += `- Categoria: ${markdownCell(issue.category)}\n- Occorrenze: ${issue.total}\n`;
+            md += `- Dettagli: ${markdownCell(issue.details)}\n- Azione richiesta: identifica la causa, applica una correzione coerente e verifica il risultato.\n- Criterio di accettazione: il problema non deve più comparire in un nuovo crawl.\n\n`;
+            if (issue.urls.length) {
+                md += `URL coinvolte (massimo 100):\n\n`;
+                issue.urls.forEach(url => { md += `- ${markdownCell(url)}\n`; });
+                md += `\n`;
+            }
+        });
+        md += `## Verifica finale richiesta\n\n- [ ] Nuovo crawl completato\n- [ ] Issue critiche risolte\n- [ ] Redirect, canonical, robots e sitemap verificati\n- [ ] Nessuna regressione di status code o contenuto\n- [ ] Report delle modifiche restituito al proprietario\n`;
+
+        const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = objectUrl;
+        link.download = `deep-crawling-ai-remediation-${new Date().toISOString().slice(0, 10)}.md`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(objectUrl);
+        showNotification(`Report AI esportato: ${groups.length} categorie`, 'success');
+    } catch (error) {
+        console.error('AI remediation export error:', error);
+        showNotification('Export AI report failed', 'error');
+    }
+}
+
+function toggleSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    if (!sidebar) return;
+    const collapsed = sidebar.classList.toggle('collapsed');
+    localStorage.setItem('librecrawl_sidebar_collapsed', collapsed ? '1' : '0');
+    const button = sidebar.querySelector('.sidebar-toggle');
+    if (button) button.textContent = collapsed ? '›' : '‹';
+}
+
+function openProjectsWorkspace() {
+    const integrationsButton = Array.from(document.querySelectorAll('.tab-btn')).find(button => button.textContent.trim() === 'Integrations');
+    if (integrationsButton) integrationsButton.click();
+    const anchor = document.getElementById('projectCrawlId');
+    if (anchor) anchor.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (localStorage.getItem('librecrawl_sidebar_collapsed') === '1') {
+        const sidebar = document.querySelector('.sidebar');
+        if (sidebar) sidebar.classList.add('collapsed');
+        const button = document.querySelector('.sidebar-toggle');
+        if (button) button.textContent = '›';
+    }
+});
+
+function renderDetailPanel(panel) {
+    const data = window._activeDetailData || {};
+    const output = document.getElementById('detailPanelOutput');
+    if (!output) return;
+    const values = {
+        summary: {url: data.url, status_code: data.status_code, title: data.title, meta_description: data.meta_description, content_type: data.content_type},
+        inlinks: data.inlinks || data.linked_from || [], outlinks: data.outlinks || [], resources: data.resources || [],
+        headers: data.http_headers || {}, cookies: data.cookies || [], structured_data: {json_ld: data.json_ld || [], schema_org: data.schema_org || []},
+        rendering: {screenshot_path: data.screenshot_path, rendered_archive_path: data.rendered_archive_path, diagnostics: data.render_diagnostics || {}, javascript_errors: data.javascript_errors || []},
+        accessibility: data.accessibility || {}, content: data.content_analysis?.n_grams || {}
+    };
+    output.innerHTML = `<h5>${escapeHtml(panel.replace('_', ' '))}</h5><pre class="json-preview">${escapeHtml(JSON.stringify(values[panel] ?? {}, null, 2))}</pre>`;
 }
 
 function closeUrlDetails() {
@@ -2294,4 +2617,373 @@ function renderIssueRow(row, issue, index) {
         <td>${issue.issue}</td>
         <td style="word-break: break-word;" title="${issue.details}">${issue.details}</td>
     `;
+}
+
+function switchSpiderView(view) {
+    const table = document.getElementById('overviewTable');
+    if (!table) return;
+    const columns = {
+        all: [], internal: ['analytics', 'links'], external: ['links'], security: ['status', 'javascript'], response: ['status', 'response'],
+        url: ['address'], titles: ['title'], meta: ['meta'], headings: ['h1', 'h2'], content: ['words'], images: ['images'], canonicals: ['canonical'],
+        pagination: ['pagination'], directives: ['robots', 'canonical'], hreflang: ['hreflang'], javascript: ['js'], amp: ['amp'], structured: ['json-ld'],
+        sitemaps: ['sitemap'], mobile: ['mobile'], accessibility: ['accessibility'], validation: ['validation'], analytics: ['analytics'], 'search-console': ['search'], links: ['links'], ai: ['ai'], changes: ['change']
+    };
+    const wanted = columns[view] || [];
+    Array.from(table.rows).forEach(row => Array.from(row.cells).forEach((cell, index) => {
+        if (index === 0 || !wanted.length) { cell.style.display = ''; return; }
+        const header = table.rows[0]?.cells[index]?.textContent.toLowerCase() || '';
+        cell.style.display = wanted.some(token => header.includes(token)) ? '' : 'none';
+    }));
+}
+
+async function checkApplicationUpdate() {
+    const output = document.getElementById('applicationUpdateResult');
+    try {
+        const manifestUrl = document.getElementById('updateManifestUrl')?.value.trim();
+        const response = manifestUrl ? await fetch('/api/app/update', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'check', manifest_url: manifestUrl})}) : await fetch('/api/app/update');
+        output.textContent = JSON.stringify(await response.json(), null, 2);
+    } catch (error) { output.textContent = error.message; }
+}
+
+async function downloadApplicationUpdate() {
+    const output = document.getElementById('applicationUpdateResult');
+    const manifestUrl = document.getElementById('updateManifestUrl')?.value.trim();
+    if (!manifestUrl) { output.textContent = 'Manifest URL required'; return; }
+    const checked = await fetch('/api/app/update', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'check', manifest_url: manifestUrl})}).then(response => response.json());
+    if (!checked.success || !checked.update?.update_available) { output.textContent = JSON.stringify(checked, null, 2); return; }
+    const response = await fetch('/api/app/update', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'download', manifest: checked.update.manifest})});
+    const data = await response.json();
+    if (data.success) window._downloadedUpdate = data.update;
+    output.textContent = JSON.stringify(data, null, 2);
+}
+
+async function applyApplicationUpdate() {
+    const output = document.getElementById('applicationUpdateResult');
+    const update = window._downloadedUpdate;
+    if (!update?.path || !window.confirm('Apply the checksum-verified update?')) return;
+    const response = await fetch('/api/app/update', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'apply', archive_path: update.path, confirm: true})});
+    output.textContent = JSON.stringify(await response.json(), null, 2);
+}
+
+async function rollbackApplicationUpdate() {
+    const output = document.getElementById('applicationUpdateResult');
+    if (!window.confirm('Restore the backup created by the last update?')) return;
+    const response = await fetch('/api/app/update', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'rollback'})});
+    output.textContent = JSON.stringify(await response.json(), null, 2);
+}
+
+async function runSemanticSearch() {
+    const query = document.getElementById('semanticQuery')?.value.trim();
+    if (!query) return;
+    const response = await fetch('/api/analysis/search', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query})});
+    const data = await response.json();
+    const container = document.getElementById('semanticResults');
+    if (!data.success) { container.textContent = data.error || 'Search failed'; return; }
+    container.innerHTML = data.results.map(item => `<p><strong>${escapeHtml(item.title || item.url)}</strong> — ${escapeHtml(item.url)} (${item.score})</p>`).join('') || '<p>No matching pages.</p>';
+}
+
+async function runEmbeddingSearch() {
+    const query = document.getElementById('semanticQuery')?.value.trim();
+    if (!query) return;
+    const response = await fetch('/api/analysis/embeddings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({query, api_key: document.getElementById('embeddingApiKey').value, model: document.getElementById('embeddingModel').value})});
+    const data = await response.json();
+    document.getElementById('semanticResults').innerHTML = data.success ? data.results.map(item => `<p><strong>${escapeHtml(item.title || item.url)}</strong> — ${escapeHtml(item.url)} (${item.score})</p>`).join('') : `<p>${escapeHtml(data.error || 'Embedding search failed')}</p>`;
+}
+
+async function runGoogleIntegration(kind) {
+    const token = document.getElementById('googleToken')?.value.trim();
+    const start = document.getElementById('googleStart')?.value;
+    const end = document.getElementById('googleEnd')?.value;
+    const payload = {access_token: token, start_date: start, end_date: end};
+    let endpoint;
+    if (kind === 'gsc') {
+        endpoint = '/api/integrations/search-console'; payload.site_url = document.getElementById('gscSite').value.trim();
+        payload.dimensions = document.getElementById('gscDimensions').value.split(',').map(value => value.trim()).filter(Boolean);
+        payload.search_type = document.getElementById('gscSearchType').value;
+        const rawGroups = document.getElementById('gscFilterGroups')?.value?.trim();
+        if (rawGroups) { try { payload.dimension_filter_groups = JSON.parse(rawGroups); } catch (error) { document.getElementById('googleResults').textContent = 'Errore: filtri GSC non validi'; return; } }
+    }
+    else { endpoint = '/api/integrations/analytics'; payload.property_id = document.getElementById('gaProperty').value.trim(); }
+    const output = document.getElementById('googleResults');
+    const response = await fetch(endpoint, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+    const data = await response.json();
+    output.textContent = JSON.stringify(data, null, 2);
+}
+
+function integrationJsonValue(id, fallback = {}) {
+    const raw = document.getElementById(id)?.value?.trim();
+    if (!raw) return fallback;
+    try { return JSON.parse(raw); } catch (error) { throw new Error(`${id}: JSON non valido`); }
+}
+
+async function runIntegrationRequest(path, payload) {
+    const output = document.getElementById('googleResults');
+    try {
+        output.textContent = 'Loading...';
+        const response = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+        output.textContent = JSON.stringify(data, null, 2);
+    } catch (error) { output.textContent = `Errore: ${error.message}`; }
+}
+
+async function runGscInspection() {
+    return runIntegrationRequest('/api/integrations/search-console/inspection', {
+        site_url: document.getElementById('gscSite').value.trim(),
+        inspection_url: document.getElementById('gscInspectionUrl').value.trim(),
+        access_token: document.getElementById('googleToken').value.trim()
+    });
+}
+
+async function runGscResources(resource) {
+    return runIntegrationRequest('/api/integrations/search-console/resources', {
+        resource, site_url: document.getElementById('gscSite').value.trim(),
+        access_token: document.getElementById('googleToken').value.trim(),
+        sitemap_url: document.getElementById('gscSitemapUrl')?.value?.trim() || undefined
+    });
+}
+
+async function runGa4Report() {
+    let dimensionFilter;
+    const rawFilter = document.getElementById('gaDimensionFilter')?.value?.trim();
+    if (rawFilter) { try { dimensionFilter = JSON.parse(rawFilter); } catch (error) { document.getElementById('googleResults').textContent = 'Errore: filtro GA4 non è JSON valido'; return; } }
+    return runIntegrationRequest('/api/integrations/ga4/report', {
+        property_id: document.getElementById('gaProperty').value.trim(),
+        access_token: document.getElementById('googleToken').value.trim(),
+        start_date: document.getElementById('googleStart').value || '30daysAgo',
+        end_date: document.getElementById('googleEnd').value || 'yesterday',
+        dimensions: [document.getElementById('gaDimensions').value],
+        metrics: document.getElementById('gaMetrics').value.split(',').map(value => value.trim()).filter(Boolean),
+        dimension_filter: dimensionFilter,
+        keep_empty_rows: document.getElementById('gaKeepEmpty')?.checked || false,
+        return_property_quota: document.getElementById('gaQuota')?.checked || false
+    });
+}
+
+async function runPageSpeedIntegration() {
+    return runIntegrationRequest('/api/integrations/pagespeed', {
+        url: document.getElementById('pagespeedUrl').value.trim(),
+        strategy: document.getElementById('pagespeedStrategy').value,
+        api_key: document.getElementById('pagespeedKey').value.trim() || undefined,
+        categories: ['performance', 'accessibility', 'seo']
+    });
+}
+
+function projectScheduleOutput(value) {
+    const output = document.getElementById('projectScheduleResults');
+    if (output) output.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
+
+async function exportProjectArchive() {
+    const id = document.getElementById('projectCrawlId')?.value;
+    if (!id) return projectScheduleOutput('Inserisci un crawl ID.');
+    const response = await fetch(`/api/projects/${encodeURIComponent(id)}/export`, {method: 'POST'});
+    if (!response.ok) return projectScheduleOutput(`Export fallito: HTTP ${response.status}`);
+    const blob = await response.blob();
+    const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `crawl-${id}.librecrawl`; link.click(); URL.revokeObjectURL(link.href);
+    projectScheduleOutput('Progetto esportato.');
+}
+
+async function exportHistoricalDataset() {
+    const id = document.getElementById('projectCrawlId')?.value;
+    if (!id) return projectScheduleOutput('Inserisci un crawl ID.');
+    const dataset = document.getElementById('historicalExportDataset').value;
+    const format = document.getElementById('historicalExportFormat').value;
+    const response = await fetch(`/api/crawls/${encodeURIComponent(id)}/export?dataset=${encodeURIComponent(dataset)}&format=${encodeURIComponent(format)}`);
+    if (!response.ok) return projectScheduleOutput(`Export fallito: HTTP ${response.status}`);
+    const blob = await response.blob(); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `librecrawl-${id}-${dataset}.${format}`; link.click(); URL.revokeObjectURL(link.href);
+    projectScheduleOutput(`Dataset ${dataset} esportato.`);
+}
+
+async function importProjectArchive() {
+    const file = document.getElementById('projectImportFile')?.files?.[0];
+    if (!file) return projectScheduleOutput('Seleziona un file .librecrawl.');
+    const form = new FormData(); form.append('project', file);
+    const response = await fetch('/api/projects/import', {method: 'POST', body: form});
+    const data = await response.json(); projectScheduleOutput(data); if (data.success && typeof openDashboard === 'function') await openDashboard();
+}
+
+async function createCrawlSchedule() {
+    const recipients = (document.getElementById('scheduleRecipients')?.value || '').split(',').map(x => x.trim()).filter(Boolean);
+    const payload = {name: document.getElementById('scheduleName').value.trim(), url: document.getElementById('scheduleUrl').value.trim(), interval_seconds: Number(document.getElementById('scheduleInterval').value || 86400), timezone: document.getElementById('scheduleTimezone').value.trim() || 'UTC', recipients};
+    const response = await fetch('/api/schedules', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+    projectScheduleOutput(await response.json());
+}
+
+async function startScheduleWorker() {
+    const response = await fetch('/api/schedules/worker', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'start'})});
+    projectScheduleOutput(await response.json());
+}
+
+async function stopScheduleWorker() {
+    const response = await fetch('/api/schedules/worker', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'stop'})});
+    projectScheduleOutput(await response.json());
+}
+
+async function runBingOperation() {
+    return runIntegrationRequest('/api/integrations/bing-webmaster/operation', {
+        operation: document.getElementById('bingOperation').value,
+        site_url: document.getElementById('bingSite').value.trim(),
+        api_key: document.getElementById('bingToken').value.trim(),
+        endpoint: document.getElementById('bingEndpoint').value.trim(),
+        payload: integrationJsonValue('bingPayload', {})
+    });
+}
+
+async function runBacklinkMetrics() {
+    const provider = document.getElementById('backlinkProvider').value.trim().toLowerCase();
+    const token = document.getElementById('backlinkToken').value;
+    const endpoint = document.getElementById('backlinkEndpoint').value.trim();
+    const target = document.getElementById('backlinkTarget').value.trim();
+    if (!target) { document.getElementById('backlinkResults').textContent = 'Inserisci una URL target.'; return; }
+    if (['ahrefs', 'majestic', 'moz'].includes(provider) && !token) { document.getElementById('backlinkResults').textContent = 'Inserisci la chiave API del provider.'; return; }
+    const response = await fetch('/api/integrations/backlinks', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+        endpoint, target_url: target, provider, api_key: token, access_token: token
+    })});
+    document.getElementById('backlinkResults').textContent = JSON.stringify(await response.json(), null, 2);
+}
+
+async function runAiAnalysis() {
+    const output = document.getElementById('aiResults');
+    const response = await fetch('/api/ai/analyze', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+        prompt: document.getElementById('aiPrompt').value.trim(), api_key: document.getElementById('aiApiKey').value,
+        endpoint: document.getElementById('aiEndpoint').value.trim()
+    })});
+    output.textContent = JSON.stringify(await response.json(), null, 2);
+}
+
+async function sendReportEmail() {
+    const output = document.getElementById('emailResult');
+    const response = await fetch('/api/reports/email', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+        to: document.getElementById('reportEmail').value.trim(), crawl_id: Number(document.getElementById('reportCrawlId').value), format: document.getElementById('reportFormat').value
+    })});
+    output.textContent = JSON.stringify(await response.json(), null, 2);
+}
+
+async function syncCloudCrawl() {
+    const response = await fetch('/api/team/cloud-sync', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+        endpoint: document.getElementById('cloudEndpoint').value.trim(), crawl_id: Number(document.getElementById('cloudCrawlId').value), access_token: document.getElementById('cloudToken').value
+    })});
+    document.getElementById('cloudResult').textContent = JSON.stringify(await response.json(), null, 2);
+}
+
+async function loadAnalysisSummary() {
+    const response = await fetch('/api/analysis/summary');
+    const data = await response.json();
+    const target = document.getElementById('analysisSummary');
+    if (!data.success) { target.textContent = data.error || 'Analysis unavailable'; return; }
+    target.innerHTML = Object.entries(data.summary).map(([key, value]) => `<p><strong>${escapeHtml(key)}:</strong> ${escapeHtml(typeof value === 'object' ? JSON.stringify(value) : String(value))}</p>`).join('');
+}
+
+async function loadOrphans() {
+    const data = await (await fetch('/api/analysis/orphans')).json();
+    document.getElementById('analysisDetails').textContent = JSON.stringify({count: (data.orphans || []).length, orphans: data.orphans || []}, null, 2);
+}
+async function loadLinkMetrics() {
+    const data = await (await fetch('/api/analysis/link-metrics')).json();
+    document.getElementById('analysisDetails').textContent = JSON.stringify(data.metrics || data, null, 2);
+}
+async function loadHttpAudit() {
+    const data = await (await fetch('/api/analysis/http-audit')).json();
+    document.getElementById('analysisDetails').textContent = JSON.stringify(data.audit || data, null, 2);
+}
+async function loadChangeDetection() {
+    const response = await fetch('/api/analysis/changes', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({old_crawl_id: Number(document.getElementById('oldCrawlId').value), new_crawl_id: Number(document.getElementById('newCrawlId').value)})});
+    const data = await response.json();
+    document.getElementById('analysisDetails').textContent = JSON.stringify(data.changes ? {count: data.count, changes: data.changes} : data, null, 2);
+}
+
+async function runRobotsTest() {
+    const site = document.getElementById('robotsSite').value.trim();
+    const target = document.getElementById('robotsUrl').value.trim();
+    const response = await fetch('/api/seo/robots-test', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({robots_text: document.getElementById('robotsText').value, url: site || target, target_url: target})});
+    document.getElementById('robotsResult').textContent = JSON.stringify(await response.json(), null, 2);
+}
+
+async function runSegment() {
+    const response = await fetch('/api/analysis/segment', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({expression: document.getElementById('segmentExpression').value})});
+    const data = await response.json();
+    document.getElementById('segmentResult').textContent = JSON.stringify({count: (data.urls || []).length, urls: (data.urls || []).slice(0, 100)}, null, 2);
+}
+
+async function runCdnRewrite() {
+    const urls = (crawlState.urls || []).map(item => item.url);
+    const response = await fetch('/api/seo/cdn-rewrite', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({cdn_host: document.getElementById('cdnHost').value, urls})});
+    document.getElementById('cdnResult').textContent = JSON.stringify(await response.json(), null, 2);
+}
+
+async function runUrlRewrite() {
+    const response = await fetch('/api/seo/rewrite', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({url: document.getElementById('rewriteUrl').value, rules: [{pattern: document.getElementById('rewritePattern').value, replacement: document.getElementById('rewriteReplacement').value}]})});
+    document.getElementById('rewriteResult').textContent = JSON.stringify(await response.json(), null, 2);
+}
+
+async function downloadGeneratedSitemap() {
+    const response = await fetch('/api/seo/sitemap', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({urls: crawlState.urls || [], base_url: crawlState.base_url || ''})});
+    if (!response.ok) { showNotification('Sitemap generation failed', 'error'); return; }
+    const blob = await response.blob(); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'librecrawl-sitemap.xml'; link.click(); URL.revokeObjectURL(link.href);
+}
+
+async function runPriorityTool(tool, payload) {
+    const output=document.getElementById('priorityResults');
+    try { const response=await fetch(`/api/seo/research/${tool}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); const data=await response.json(); if(!response.ok||data.error) throw new Error(data.error||`HTTP ${response.status}`); output.textContent=JSON.stringify(data,null,2); }
+    catch(error) { output.textContent=`Errore: ${error.message}`; }
+}
+function priorityJsonRows() { const raw=document.getElementById('priorityRows').value.trim(); if(!raw) return []; try{return JSON.parse(raw);}catch(error){throw new Error('Rows JSON non valido');} }
+async function runPriorityCron() { return runPriorityTool('cron-next',{expression:document.getElementById('priorityCron').value,timezone:document.getElementById('priorityTimezone').value}); }
+async function runPriorityResourceAudit() { try{return runPriorityTool('resource-audit',{rows:priorityJsonRows()});}catch(error){document.getElementById('priorityResults').textContent=`Errore: ${error.message}`;} }
+async function runPrioritySpaAudit() { try{return runPriorityTool('spa-detection',{row:priorityJsonRows()[0]||{}});}catch(error){document.getElementById('priorityResults').textContent=`Errore: ${error.message}`;} }
+
+async function loadNativeSeoDashboard() {
+    const data = await (await fetch('/api/seo/dashboard')).json();
+    document.getElementById('nativeSeoDashboard').textContent = JSON.stringify(data, null, 2);
+}
+
+async function runNativeSeoScore() {
+    const response = await fetch('/api/seo/strategy/score', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({rows: crawlState.urls || [], issues: crawlState.issues || []})});
+    document.getElementById('nativeSeoDashboard').textContent = JSON.stringify(await response.json(), null, 2);
+}
+
+async function runNativeKeywordTools() {
+    const keywords = document.getElementById('nativeKeywords').value.split(',').map(keyword => keyword.trim()).filter(Boolean);
+    const cluster = await (await fetch('/api/native-seo-tools/keyword-cluster', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({keywords})})).json();
+    const cannibalization = await (await fetch('/api/native-seo-tools/cannibalization', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({rows:crawlState.urls || []})})).json();
+    document.getElementById('nativeKeywordResults').textContent = JSON.stringify({cluster, cannibalization}, null, 2);
+}
+
+async function saveNativeRankSnapshot() {
+    const response = await fetch('/api/seo/history/rank', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+        keyword:document.getElementById('rankKeyword').value, url:document.getElementById('rankUrl').value,
+        competitor:document.getElementById('rankCompetitor')?.value || '',
+        position:Number(document.getElementById('rankPosition').value), country:document.getElementById('rankCountry').value,
+        device:document.getElementById('rankDevice').value})});
+    document.getElementById('nativeRankResults').textContent = JSON.stringify(await response.json(), null, 2);
+}
+
+function parseAdvancedSeoJson(id, fallback) {
+    const raw = document.getElementById(id)?.value?.trim();
+    if (!raw) return fallback;
+    try { return JSON.parse(raw); } catch (error) { throw new Error(`${id}: JSON non valido`); }
+}
+
+async function runAdvancedSeoTool(path, payload) {
+    const output = document.getElementById('advancedSeoResults');
+    try {
+        output.textContent = 'Loading...';
+        const response = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+        output.textContent = JSON.stringify(data, null, 2);
+    } catch (error) { output.textContent = `Errore: ${error.message}`; }
+}
+
+async function runRankHistoryReport() {
+    try { return runAdvancedSeoTool('/api/native-seo-tools/rank-tracker', {snapshots:parseAdvancedSeoJson('rankHistoryJson', [])}); }
+    catch (error) { document.getElementById('advancedSeoResults').textContent = `Errore: ${error.message}`; }
+}
+
+async function runLighthouseRegression() {
+    try { return runAdvancedSeoTool('/api/seo/realtime/lighthouse-regression', {
+        before:parseAdvancedSeoJson('lighthouseBefore', {}), after:parseAdvancedSeoJson('lighthouseAfter', {})
+    }); } catch (error) { document.getElementById('advancedSeoResults').textContent = `Errore: ${error.message}`; }
 }

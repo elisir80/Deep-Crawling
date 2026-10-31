@@ -4,4 +4,12 @@
 users.db
 data/*.db
 
+# Local/runtime files
+.venv/
+data/
+.DS_Store
+*.log
+*.sqlite
+*.sqlite3
+
 .env

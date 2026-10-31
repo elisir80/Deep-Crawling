@@ -27,6 +27,9 @@ class SettingsManager:
         user_settings = [
             # Crawler tab
             'maxDepth', 'maxUrls', 'crawlDelay', 'followRedirects', 'crawlExternalLinks',
+            'ignoreNonIndexableDuplicates', 'ignorePaginatedDuplicates', 'followCanonical',
+            'followRedirectChains', 'respectHsts', 'respectNoindex', 'respectNofollow',
+            'respectCanonical', 'respectNextPrev', 'followMetaRefresh', 'crawlFragments',
             # Export tab
             'exportFormat', 'exportFields',
             # Issues tab
@@ -78,9 +81,16 @@ class SettingsManager:
             'crawlDelay': 1,
             'followRedirects': True,
             'crawlExternalLinks': False,
+            'crawlAllSubdomains': False,
+            'crawlOutsideStartFolder': True,
+            'respectHsts': False,
+            'respectNoindex': False,
+            'respectNofollow': False,
+            'respectCanonical': False,
+            'respectNextPrev': False,
 
             # Request settings
-            'userAgent': 'LibreCrawl/1.0 (Web Crawler)',
+            'userAgent': 'Deep Crawling/1.0 (Web Crawler)',
             'timeout': 10,
             'retries': 3,
             'acceptLanguage': 'en-US,en;q=0.9',
@@ -89,6 +99,9 @@ class SettingsManager:
             'discoverSitemaps': True,
             'enablePageSpeed': False,
             'googleApiKey': '',
+            'customExtractions': [],
+            'customSearches': [],
+            'contentAreaSelector': '',
 
             # Filter settings
             'includeExtensions': 'html,htm,php,asp,aspx,jsp',
@@ -96,6 +109,26 @@ class SettingsManager:
             'includePatterns': '',
             'excludePatterns': '',
             'maxFileSize': 50,
+            'maxRedirects': 10,
+            'maxUrlLength': 2048,
+            'maxQueryStrings': 20,
+            'maxUrlsPerDepth': 0,
+            'maxUrlsPerSubdomain': 0,
+            'maxFolderDepth': 20,
+            'maxLinksPerUrl': 0,
+
+            # Spider advanced parity preferences
+            'ignoreNonIndexableDuplicates': False,
+            'ignorePaginatedDuplicates': False,
+            'followCanonical': False,
+            'followRedirectChains': True,
+            'followMetaRefresh': True,
+            'crawlFragments': False,
+            'retry5xx': True,
+            'retry5xxAttempts': 2,
+            'titleWidthMode': 'pixel',
+            'metaDescriptionWidthMode': 'pixel',
+            'enableHtmlValidation': True,
 
             # Duplication detection settings
             'enableDuplicationCheck': True,
@@ -113,6 +146,10 @@ class SettingsManager:
             'enableProxy': False,
             'proxyUrl': '',
             'customHeaders': '',
+            'authUsername': '',
+            'authPassword': '',
+            'authBearerToken': '',
+            'cookieHeader': '',
 
             # JavaScript rendering settings
             'enableJavaScript': False,
@@ -120,10 +157,18 @@ class SettingsManager:
             'jsTimeout': 30,
             'jsBrowser': 'chromium',
             'jsHeadless': True,
-            'jsUserAgent': 'LibreCrawl/1.0 (Web Crawler with JavaScript)',
+            'jsUserAgent': 'Deep Crawling/1.0 (Web Crawler with JavaScript)',
             'jsViewportWidth': 1920,
             'jsViewportHeight': 1080,
             'jsMaxConcurrentPages': 3,
+            'jsScreenshots': False,
+            'jsScreenshotDir': 'data/screenshots',
+            'jsArchive': False,
+            'jsArchiveDir': 'data/rendered',
+            'jsFlattenShadowDom': False,
+            'jsFlattenIframes': False,
+            'jsCustomScript': '',
+            'jsInteractions': '',
 
             # Custom CSS styling
             'customCSS': '',
@@ -478,8 +523,15 @@ class SettingsManager:
             'max_depth': settings['maxDepth'],
             'max_urls': settings['maxUrls'],
             'delay': settings['crawlDelay'],
-            'follow_redirects': settings['followRedirects'],
+            'follow_redirects': settings['followRedirects'] and settings.get('followRedirectChains', True),
             'crawl_external': settings['crawlExternalLinks'],
+            'crawl_all_subdomains': settings.get('crawlAllSubdomains', False),
+            'crawl_outside_start_folder': settings.get('crawlOutsideStartFolder', True),
+            'respect_hsts': settings.get('respectHsts', False),
+            'respect_noindex': settings.get('respectNoindex', False),
+            'respect_nofollow': settings.get('respectNofollow', False),
+            'respect_canonical': settings.get('respectCanonical', False),
+            'respect_next_prev': settings.get('respectNextPrev', False),
             'user_agent': settings['userAgent'],
             'timeout': settings['timeout'],
             'retries': settings['retries'],
@@ -491,12 +543,41 @@ class SettingsManager:
             'include_patterns': [p.strip() for p in settings['includePatterns'].split('\n') if p.strip()],
             'exclude_patterns': [p.strip() for p in settings['excludePatterns'].split('\n') if p.strip()],
             'max_file_size': settings['maxFileSize'] * 1024 * 1024,  # Convert MB to bytes
+            'max_redirects': settings.get('maxRedirects', 10),
+            'max_url_length': settings.get('maxUrlLength', 2048),
+            'max_query_strings': settings.get('maxQueryStrings', 20),
+            'max_folder_depth': settings.get('maxFolderDepth', 20),
+            'max_links_per_url': settings.get('maxLinksPerUrl', 0),
+            'ignore_non_indexable_duplicates': settings.get('ignoreNonIndexableDuplicates', False),
+            'ignore_paginated_duplicates': settings.get('ignorePaginatedDuplicates', False),
+            'follow_canonical': settings.get('followCanonical', False),
+            'follow_redirect_chains': settings.get('followRedirectChains', True),
+            'follow_meta_refresh': settings.get('followMetaRefresh', True),
+            'crawl_fragments': settings.get('crawlFragments', False),
+            'retry_5xx': settings.get('retry5xx', True),
+            'retry_5xx_attempts': settings.get('retry5xxAttempts', 2),
+            'max_urls_per_depth': settings.get('maxUrlsPerDepth', 0),
+            'max_urls_per_subdomain': settings.get('maxUrlsPerSubdomain', 0),
             'concurrency': settings['concurrency'],
             'memory_limit': settings['memoryLimit'] * 1024 * 1024,  # Convert MB to bytes
             'log_level': settings['logLevel'],
             'enable_proxy': settings['enableProxy'],
             'proxy_url': settings['proxyUrl'] if settings['enableProxy'] else None,
+            'proxy_username': settings.get('proxyUsername', ''),
+            'proxy_password': settings.get('proxyPassword', ''),
+            'proxy_no_proxy': settings.get('proxyNoProxy', ''),
+            'trusted_certificates': settings.get('trustedCertificates', True),
+            'storage_mode': settings.get('storageMode', 'full'),
+            'crawl_retention_days': settings.get('crawlRetentionDays', 90),
             'custom_headers': self._parse_custom_headers(settings['customHeaders']),
+            'auth_username': settings.get('authUsername', ''),
+            'auth_password': settings.get('authPassword', ''),
+            'auth_bearer_token': settings.get('authBearerToken', ''),
+            'cookie_header': settings.get('cookieHeader', ''),
+            'cookie_storage': settings.get('cookieStorage', False),
+            'custom_extractions': settings.get('customExtractions', []),
+            'custom_searches': settings.get('customSearches', []),
+            'content_area_selector': settings.get('contentAreaSelector', ''),
             'discover_sitemaps': settings['discoverSitemaps'],
             'enable_pagespeed': settings['enablePageSpeed'],
             'google_api_key': settings['googleApiKey'],
@@ -509,10 +590,29 @@ class SettingsManager:
             'js_viewport_width': settings['jsViewportWidth'],
             'js_viewport_height': settings['jsViewportHeight'],
             'js_max_concurrent_pages': settings['jsMaxConcurrentPages'],
+            'js_screenshots': settings.get('jsScreenshots', False),
+            'js_screenshot_dir': settings.get('jsScreenshotDir', 'data/screenshots'),
+            'js_archive': settings.get('jsArchive', False),
+            'js_archive_dir': settings.get('jsArchiveDir', 'data/rendered'),
+            'js_flatten_shadow_dom': settings.get('jsFlattenShadowDom', False),
+            'js_flatten_iframes': settings.get('jsFlattenIframes', False),
+            'js_custom_script': settings.get('jsCustomScript', ''),
+            'js_interactions': self._parse_js_interactions(settings.get('jsInteractions', '')),
             'issue_exclusion_patterns': [p.strip() for p in settings['issueExclusionPatterns'].split('\n') if p.strip()],
             'enable_duplication_check': settings['enableDuplicationCheck'],
             'duplication_threshold': settings['duplicationThreshold']
         }
+
+    def _parse_js_interactions(self, interactions_text):
+        """Parse JSON interaction steps while keeping malformed settings safe."""
+        if not interactions_text:
+            return []
+        try:
+            import json
+            value = json.loads(interactions_text) if isinstance(interactions_text, str) else interactions_text
+            return value if isinstance(value, list) else []
+        except (TypeError, ValueError):
+            return []
 
     def _parse_custom_headers(self, headers_text):
         """Parse custom headers from text format"""

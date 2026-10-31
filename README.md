@@ -132,6 +132,38 @@ python main.py -l
 
 ## LibreCrawl Plugins
 
+### Extended local workflows
+
+The web interface supports Spider, List and XML Sitemap modes. The same
+workflow is available from the command line:
+
+```bash
+source .venv/bin/activate
+python librecrawl_cli.py https://example.com --output report.json
+python librecrawl_cli.py --mode list --seed https://example.com/a --seed https://example.com/b
+python librecrawl_cli.py --mode sitemap --seed https://example.com/sitemap.xml
+```
+
+Recurring crawls can be run with the dependency-free scheduler. It writes
+timestamped JSON reports and can POST completion notifications to a webhook:
+
+```bash
+python librecrawl_scheduler.py https://example.com \
+  --interval 86400 --webhook https://example.net/crawl-hook
+```
+
+Saved crawl reports and comparisons are available through:
+
+```text
+GET /api/crawls/<id>/report
+GET /api/crawls/compare?old=<id>&new=<id>
+GET /api/crawls/compare?old=<id>&new=<id>&format=csv
+```
+
+Google Analytics 4 and Search Console connectors accept OAuth bearer tokens
+per request through `/api/integrations/analytics` and
+`/api/integrations/search-console`; tokens are not persisted by LibreCrawl.
+
 Drop your custom plugin files in `/web/static/plugins/`! Each `.js` file will automatically create a new tab in LibreCrawl.
 
 ### 🔌 Quick Start
@@ -303,6 +335,35 @@ LibreCrawl supports multiple concurrent users with isolated sessions:
 - Large sites may take time to crawl completely
 - JavaScript rendering is slower than HTTP-only crawling
 - Settings stored in localStorage (cleared if browser data is cleared)
+
+## Advanced SEO Spider coverage
+
+LibreCrawl stores and exposes advanced crawl evidence per URL, including PDF
+text/metadata, SWF and media detection, AMP and rel pagination, meta refresh,
+srcset, response headers/cookies, HSTS, HTML validation, accessibility,
+content-area/readability/spelling heuristics, n-grams, semantic search,
+duplicate/change/orphan analysis, link metrics, JavaScript screenshots and
+render archives. The HTTP crawler supports URL/depth/query/link/redirect
+limits, custom headers, Basic Auth, Bearer tokens, Cookie headers, proxies,
+robots checks and sitemap/list crawl modes.
+
+Useful local API endpoints include:
+
+- `POST /api/seo/robots-test` and `POST /api/seo/sitemap`
+- `GET /api/crawls/<id>/report`, `/api/crawls/compare`
+- `POST /api/reports/email` (JSON report attachment)
+- `POST /api/team/crawls/<id>/share` and `GET /api/team/shared/<token>`
+- `POST /api/mcp` (`initialize`, `resources/list`, `resources/read`, `tools/list`, `tools/call` for local inspection/search/report)
+
+Advanced configuration also supports JSON Custom Search rules (`text` and
+`regex`), local TF-IDF semantic search, optional OpenAI-compatible embeddings
+via `/api/analysis/embeddings`, per-depth and per-subdomain crawl quotas,
+start-folder boundaries, HSTS/noindex policies, and expiring/revocable team
+share links. Embedding and AI credentials are request-scoped and are never
+stored in crawl results.
+
+Authentication headers and credentials are used only by the crawl request
+session and are excluded from saved URL audit data.
 
 ## Files
 

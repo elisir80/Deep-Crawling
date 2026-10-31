@@ -101,6 +101,17 @@ function initVisualization() {
     }
 }
 
+function loadSavedVisualizationData() {
+    const crawlId = Number(document.getElementById('visualizationCrawlId')?.value);
+    if (!crawlId) { if (typeof showNotification === 'function') showNotification('Inserisci un crawl ID', 'warning'); return; }
+    fetch(`/api/crawls/${crawlId}/visualization_data`).then(response => response.json()).then(data => {
+        if (!data.success) throw new Error(data.error || 'Visualization load failed');
+        graphData = {nodes: data.nodes || [], edges: data.edges || []};
+        if (!cy) initVisualization();
+        updateGraph();
+    }).catch(error => { if (typeof showNotification === 'function') showNotification(error.message, 'error'); });
+}
+
 /**
  * Setup mouse interactions and tooltips
  */
