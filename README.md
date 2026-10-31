@@ -1,377 +1,174 @@
-# LibreCrawl
+# Deep Crawling
 
-A web-based multi-tenant crawler for SEO analysis and website auditing.
+<div align="center">
+<img src="docs/assets/deep-crawling-hero.png" alt="Deep Crawling SEO crawler hero banner" width="100%">
 
-🌐 **Website**: [librecrawl.com](https://librecrawl.com)
+### Open-source SEO crawler, technical auditor and website intelligence platform
 
-**Demo no longer available cause people thought it was a prod environ, it isnt, it was a demo to get a taste before installing**
+<a href="https://github.com/elisir80/Deep-Crawling"><img src="https://img.shields.io/github/stars/elisir80/Deep-Crawling?style=flat&logo=github" alt="GitHub stars"></a>
+<a href="https://github.com/elisir80/Deep-Crawling/blob/main/LICENSE"><img src="https://img.shields.io/github/license/elisir80/Deep-Crawling" alt="License"></a>
+<img src="https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white" alt="Python 3.8+">
+<img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white" alt="Docker ready">
 
-**API Documentation:** [https://librecrawl.com/api/docs/](https://librecrawl.com/api/docs/)
+<strong>Discover every URL. Understand every issue. Improve every site.</strong>
+</div>
 
-LibreCrawl will ***always*** be free and open source. If it's replacing your $259/year Screaming Frog license, deepcrawl license or sitebulb license, [buy me a coffee](https://www.paypal.com/donate/?business=7H9HFA3385JS8&no_recurring=0&item_name=Continue+the+development+of+LibreCrawl&currency_code=AUD).
+## Overview
 
-## What it does
+Deep Crawling is a self-hosted, open-source website crawler for technical SEO audits, content analysis, link intelligence and site monitoring. It combines a live browser interface with CLI workflows, scheduled crawls, project storage, exports and an extensible plugin system.
 
-LibreCrawl crawls websites and gives you detailed information about pages, links, SEO elements, and performance. It's built as a web application using Python Flask with a modern web interface supporting multiple concurrent users.
+It is designed for SEO specialists, developers, agencies and site owners who want a transparent alternative to closed crawler platforms while keeping crawl data under their own control.
 
-## Features
+## Highlights
 
-- 🚀 **Multi-tenancy** - Multiple users can crawl simultaneously with isolated sessions
-- 🎨 **Custom CSS styling** - Personalize the UI with your own CSS themes
-- 💾 **Browser localStorage persistence** - Settings saved per browser
-- 🔄 **JavaScript rendering** for dynamic content (React, Vue, Angular, etc.)
-- 📊 **SEO analysis** - Extract titles, meta descriptions, headings, etc.
-- 🔗 **Link analysis** - Track internal and external links with detailed relationship mapping
-- 📈 **PageSpeed Insights integration** - Analyze Core Web Vitals
-- 💾 **Multiple export formats** - CSV, JSON, or XML
-- 🔍 **Issue detection** - Automated SEO issue identification
-- ⚡ **Real-time crawling progress** with live statistics
+- **Self-hosted and privacy-friendly** — run locally, on a private server or in Docker.
+- **Real-site crawling** — HTML, JavaScript applications, sitemaps and URL lists.
+- **Actionable findings** — page-level evidence, grouped issues and exportable reports.
+- **Large-crawl aware** — incremental polling, virtualized views and background workflows.
+- **Extensible** — custom tabs and analyses through the plugin system.
+- **Automation ready** — CLI, scheduler, webhooks and API endpoints.
 
-## Getting started
-### Quick Start (Automatic Installation)
+### Crawling and rendering
 
-**The easiest way to run LibreCrawl** - just run the startup script and it handles everything:
+- Spider, URL-list and XML sitemap crawl modes
+- JavaScript rendering for React, Vue, Angular and dynamic websites
+- Source HTML, rendered HTML, extracted text and metadata
+- Internal/external links, redirects, canonicals and hreflang
+- Robots directives, HTTP headers, cookies, resources and timing
+- Crawl depth, queue progress, rate limiting and live statistics
 
-**Windows:**
-```batch
-start-librecrawl.bat
-```
+### Technical SEO analysis
 
-**Linux/Mac:**
+- Missing, duplicate and oversized titles and meta descriptions
+- Heading structure, word count and thin-content signals
+- Broken links, redirect chains, server errors and no-response URLs
+- Images, alt text, dimensions, formats and resource weight
+- Structured data, JSON-LD, accessibility and HTML validation
+- PageSpeed and Core Web Vitals integrations
+
+### Professional workflows
+
+- Saved projects, crawl import/export and historical comparisons
+- CSV, JSON, XML and Markdown issue reports
+- Scheduled crawls with webhook and email notification support
+- Multi-user authentication and administrator controls
+- Portfolio, enterprise SEO and custom extraction modules
+- Google Analytics 4, Search Console, Bing and PageSpeed adapters
+
+## Quick start
+
+### Automatic setup
+
 ```bash
+git clone https://github.com/elisir80/Deep-Crawling.git
+cd Deep-Crawling
 chmod +x start-librecrawl.sh
 ./start-librecrawl.sh
 ```
 
-**What it does automatically:**
-1. Checks for Docker - if found, runs LibreCrawl in a container (recommended)
-2. If no Docker, checks for Python - if not found, downloads and installs it (Windows only *temporairly disabled since it causes some bat issues*)
-3. Installs all dependencies automatically (`pip install -r requirements.txt`)
-4. Installs Playwright browsers for JavaScript rendering
-5. Starts LibreCrawl in local mode (no authentication)
-6. Opens your browser to `http://localhost:5000`
+On Windows, run `start-librecrawl.bat`. Then open [http://localhost:5000](http://localhost:5000).
 
-### Manual Installation
+### Docker
 
-If you prefer to install manually or want more control:
-
-#### Option 1: Docker (Recommended)
-
-**Requirements:**
-- Docker and Docker Compose
-
-**Steps:**
 ```bash
-# Clone the repository
-git clone https://github.com/PhialsBasement/LibreCrawl.git
-cd LibreCrawl
-
-# Copy environment file
+git clone https://github.com/elisir80/Deep-Crawling.git
+cd Deep-Crawling
 cp .env.example .env
-
-# Start LibreCrawl
 docker compose up -d
-
-# Open browser to http://localhost:5000
-```
-By default, LibreCrawl runs in local mode for easy personal use. The `.env` file controls this:
-
-```bash
-# .env file
-LOCAL_MODE=true
-HOST_BINDING=127.0.0.1
-REGISTRATION_DISABLED=false
 ```
 
-For production deployment with user authentication, edit your `.env` file:
+### Python
 
 ```bash
-# .env file
-LOCAL_MODE=false
-HOST_BINDING=0.0.0.0
-REGISTRATION_DISABLED=false
-# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
-SECRET_KEY=replace-with-a-long-random-string
-```
-
-
-#### Option 2: Python
-
-- Python 3.8 or later
-- Modern web browser (Chrome, Firefox, Safari, Edge)
-
-### Installation
-
-1. Clone or download this repository
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. For JavaScript rendering support (optional):
-```bash
-playwright install chromium
-```
-
-4. Run the application:
-```bash
-# Standard mode (with authentication and tier system)
-python main.py
-
-# Local mode (all users get admin tier, no rate limits)
-python main.py --local
-# or
-python main.py -l
-```
-
-5. Open your browser and navigate to:
-   - Local: `http://localhost:5000`
-   - Network: `http://<your-ip>:5000`
-
-
-## LibreCrawl Plugins
-
-### Extended local workflows
-
-The web interface supports Spider, List and XML Sitemap modes. The same
-workflow is available from the command line:
-
-```bash
+python3 -m venv .venv
 source .venv/bin/activate
-python librecrawl_cli.py https://example.com --output report.json
-python librecrawl_cli.py --mode list --seed https://example.com/a --seed https://example.com/b
-python librecrawl_cli.py --mode sitemap --seed https://example.com/sitemap.xml
+pip install -r requirements.txt
+playwright install chromium
+python main.py --local
 ```
 
-Recurring crawls can be run with the dependency-free scheduler. It writes
-timestamped JSON reports and can POST completion notifications to a webhook:
+For authenticated deployments, set a persistent secret before starting:
 
 ```bash
-python librecrawl_scheduler.py https://example.com \
-  --interval 86400 --webhook https://example.net/crawl-hook
+export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+python main.py
 ```
 
-Saved crawl reports and comparisons are available through:
+## CLI examples
 
-```text
-GET /api/crawls/<id>/report
-GET /api/crawls/compare?old=<id>&new=<id>
-GET /api/crawls/compare?old=<id>&new=<id>&format=csv
+```bash
+# Crawl a site and save a JSON report
+python librecrawl_cli.py https://example.com --output report.json
+
+# Crawl a list of URLs
+python librecrawl_cli.py --mode list --seed https://example.com/ --seed https://example.com/about
+
+# Crawl an XML sitemap
+python librecrawl_cli.py --mode sitemap --seed https://example.com/sitemap.xml
+
+# Run a recurring crawl every 24 hours
+python librecrawl_scheduler.py https://example.com --interval 86400 --webhook https://example.net/crawl-hook
 ```
 
-Google Analytics 4 and Search Console connectors accept OAuth bearer tokens
-per request through `/api/integrations/analytics` and
-`/api/integrations/search-console`; tokens are not persisted by LibreCrawl.
+## Architecture
 
-Drop your custom plugin files in `/web/static/plugins/`! Each `.js` file will automatically create a new tab in LibreCrawl.
+```mermaid
+flowchart LR
+    A[Browser UI] --> B[Flask application]
+    C[CLI / Scheduler] --> B
+    B --> D[Crawler engine]
+    D --> E[HTTP and JS rendering]
+    D --> F[SEO extractors]
+    F --> G[Issue detector]
+    G --> H[(Crawl database)]
+    B --> I[Exports and reports]
+    B --> J[Plugins and integrations]
+```
 
-### 🔌 Quick Start
+## Plugin system
 
-1. Create a new `.js` file in this folder (e.g., `my-plugin.js`)
-2. Register your plugin using the LibreCrawl Plugin API
-3. Refresh the app - your new tab appears automatically!
-
-### 📝 Example Plugin Structure
+Drop a JavaScript plugin into `web/static/plugins/` and register a new tab:
 
 ```javascript
 LibreCrawlPlugin.register({
-  // Required: Unique ID (used for tab identification)
-  id: 'my-plugin',
-
-  // Required: Display name
-  name: 'My Plugin',
-
-  // Required: Tab configuration
-  tab: {
-    label: 'My Tab',
-    icon: '🔥', // Optional emoji
-  },
-
-  // Called when your tab is activated
+  id: 'content-opportunities',
+  name: 'Content Opportunities',
+  tab: { label: 'Content', icon: '✍️' },
   onTabActivate(container, data) {
-    // data contains: { urls, links, issues, stats }
-    container.innerHTML = `
-      <div class="plugin-content" style="padding: 20px; overflow-y: auto; max-height: calc(100vh - 280px);">
-        <h2>My Custom Analysis</h2>
-        <p>Found ${data.urls.length} URLs!</p>
-      </div>
-    `;
-  },
-
-  // Optional: Called during live crawls when data updates
-  onDataUpdate(data) {
-    if (this.isActive) {
-      // Update your UI
-    }
+    container.textContent = `Analysing ${data.urls.length} URLs`;
   }
 });
 ```
 
-### 🎯 Available Data
+See [the plugin documentation](web/static/plugins/README.md) for the full API.
 
-Your plugin receives the same data as built-in tabs:
+## Security and deployment
 
-- **`urls`** - Array of all crawled URLs with full metadata
-- **`links`** - All discovered links (internal/external)
-- **`issues`** - Detected SEO issues
-- **`stats`** - Crawl statistics (discovered, crawled, depth, speed)
+- Keep `.env`, databases, crawl history, credentials and browser profiles out of commits.
+- Use HTTPS, a persistent `SECRET_KEY`, authentication, firewall rules and a non-root service account for internet-facing deployments.
+- Review [`deploy/setup-server.sh`](deploy/setup-server.sh) for the hardened systemd example.
 
-### 📚 Full API Reference
+## Project status
 
-#### Plugin Configuration
+Deep Crawling is actively evolving toward a complete professional SEO crawler. The current implementation includes the crawler engine, web workspace, project workflows, enterprise SEO modules, CLI automation and extensibility foundations.
 
-```javascript
-{
-  id: string,              // Unique identifier
-  name: string,            // Display name
-  version: string,         // Optional version
-  author: string,          // Optional author
-  description: string,     // Optional description
+See [the Screaming Frog parity matrix](docs/SCREAMING_FROG_PARITY.md) for current coverage and known differences.
 
-  tab: {
-    label: string,         // Tab button text
-    icon: string,          // Optional emoji/icon
-    position: number       // Optional position (default: append to end)
-  }
-}
+## Contributing
+
+```bash
+python -m compileall -q main.py src librecrawl_cli.py librecrawl_scheduler.py
+pytest -q
+git diff --check
 ```
 
-#### Lifecycle Hooks
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) and keep credentials and crawl databases out of commits.
 
-- `onLoad()` - Called when plugin loads
-- `onTabActivate(container, data)` - Called when tab becomes active
-- `onTabDeactivate()` - Called when user switches away
-- `onDataUpdate(data)` - Called during live crawls
-- `onCrawlComplete(data)` - Called when crawl finishes
+## License and links
 
-#### Utilities
+Deep Crawling is free and open source under the terms of the [LICENSE](LICENSE).
 
-Access built-in utilities via `this.utils`:
-
-```javascript
-this.utils.showNotification(message, type) // 'success', 'error', 'info'
-this.utils.formatUrl(url)
-this.utils.escapeHtml(text)
-```
-
-#### 🎨 Styling
-
-Use these CSS classes to match LibreCrawl's design:
-
-- `.plugin-content` - Main container
-- `.plugin-header` - Header section
-- `.data-table` - Tables (auto-styled)
-- `.stat-card` - Statistic cards
-- `.score-good` / `.score-needs-improvement` / `.score-poor` - Score indicators
-
-**Important:** Always add these styles to your main plugin container for proper scrolling:
-
-```javascript
-container.innerHTML = `
-  <div class="plugin-content" style="padding: 20px; overflow-y: auto; max-height: calc(100vh - 280px);">
-    <!-- Your content here -->
-  </div>
-`;
-```
-
-The `max-height: calc(100vh - 280px)` ensures your content scrolls properly within the tab pane.
-
-#### Example Plugins
-
-Check out these example plugins to get started:
-
-- `_example-plugin.js` - Basic template (ignored by loader)
-- `e-e-a-t.js` - E-E-A-T analyzer example
-
-
-### Running Modes
-
-**Standard Mode** (default):
-- Full authentication system with login/register
-- Tier-based access control (Guest, User, Extra, Admin)
-- Guest users limited to 3 crawls per 24 hours (IP-based)
-- Ideal for public-facing demos or shared hosting
-
-**Local Mode** (`--local` or `-l`):
-- All users automatically get admin tier access
-- No rate limits or tier restrictions
-- Perfect for personal use or single-user self-hosting
-- Recommended for local development and testing
-
-## Configuration
-
-Click "Settings" to configure:
-
-- **Crawler settings**: depth (up to 5M URLs), delays, external links
-- **Request settings**: user agent, timeouts, proxy, robots.txt
-- **JavaScript rendering**: browser engine, wait times, viewport size
-- **Filters**: file types and URL patterns to include/exclude
-- **Export options**: formats and fields to export
-- **Custom CSS**: personalize the UI appearance with custom styles
-- **Issue exclusion**: patterns to exclude from SEO issue detection
-
-For PageSpeed analysis, add a Google API key in Settings > Requests for higher rate limits (25k/day vs limited).
-
-## Export formats
-
-- **CSV**: Spreadsheet-friendly format
-- **JSON**: Structured data with all details
-- **XML**: Markup format for other tools
-
-## Multi-tenancy
-
-LibreCrawl supports multiple concurrent users with isolated sessions:
-
-- Each browser session gets its own crawler instance and data
-- Settings are stored in browser localStorage (persistent across restarts)
-- Custom CSS themes are per-browser
-- Sessions expire after 1 hour of inactivity
-- Crawl data is isolated between users
-
-## Known limitations
-
-- PageSpeed API has rate limits (works better with API key)
-- Large sites may take time to crawl completely
-- JavaScript rendering is slower than HTTP-only crawling
-- Settings stored in localStorage (cleared if browser data is cleared)
-
-## Advanced SEO Spider coverage
-
-LibreCrawl stores and exposes advanced crawl evidence per URL, including PDF
-text/metadata, SWF and media detection, AMP and rel pagination, meta refresh,
-srcset, response headers/cookies, HSTS, HTML validation, accessibility,
-content-area/readability/spelling heuristics, n-grams, semantic search,
-duplicate/change/orphan analysis, link metrics, JavaScript screenshots and
-render archives. The HTTP crawler supports URL/depth/query/link/redirect
-limits, custom headers, Basic Auth, Bearer tokens, Cookie headers, proxies,
-robots checks and sitemap/list crawl modes.
-
-Useful local API endpoints include:
-
-- `POST /api/seo/robots-test` and `POST /api/seo/sitemap`
-- `GET /api/crawls/<id>/report`, `/api/crawls/compare`
-- `POST /api/reports/email` (JSON report attachment)
-- `POST /api/team/crawls/<id>/share` and `GET /api/team/shared/<token>`
-- `POST /api/mcp` (`initialize`, `resources/list`, `resources/read`, `tools/list`, `tools/call` for local inspection/search/report)
-
-Advanced configuration also supports JSON Custom Search rules (`text` and
-`regex`), local TF-IDF semantic search, optional OpenAI-compatible embeddings
-via `/api/analysis/embeddings`, per-depth and per-subdomain crawl quotas,
-start-folder boundaries, HSTS/noindex policies, and expiring/revocable team
-share links. Embedding and AI credentials are request-scoped and are never
-stored in crawl results.
-
-Authentication headers and credentials are used only by the crawl request
-session and are excluded from saved URL audit data.
-
-## Files
-
-- `main.py` - Main application and Flask server
-- `src/crawler.py` - Core crawling engine
-- `src/settings_manager.py` - Configuration management
-- `web/` - Frontend interface files
-
-## License
-
-MIT License - see LICENSE file for details.
+- [Repository](https://github.com/elisir80/Deep-Crawling)
+- [Issues and feature requests](https://github.com/elisir80/Deep-Crawling/issues)
+- [Parity matrix](docs/SCREAMING_FROG_PARITY.md)
+- [Plugin documentation](web/static/plugins/README.md)
